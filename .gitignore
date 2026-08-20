@@ -1,0 +1,38 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+.terraformrc
+terraform.rc
+override.tf
+override.tf.json
+*_override.tf
+
+# Never commit real values — these hold IPs, emails, and account detail
+terraform.tfvars
+*.auto.tfvars
+!terraform.tfvars.example
+
+# Keys and secrets
+*.pem
+*.key
+*.ppk
+kubeconfig*
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+*.zip
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
