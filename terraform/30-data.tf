@@ -199,3 +199,52 @@ output "blocks_table" {
 output "quarantines_table" {
   value = aws_dynamodb_table.quarantines.name
 }
+
+# ---------------------------------------------------------------------------
+# SOAR event store.
+#
+# Every normalised event lands here before anything acts on it, so the audit
+# trail survives a failure anywhere downstream. The GSI on source_ip is what
+# makes threshold correlation possible: "five failures from this address in
+# five minutes" is a query, not a table scan.
+# ---------------------------------------------------------------------------
+
+resource "aws_dynamodb_table" "events" {
+  name         = "${var.project}-soar-events"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "event_id"
+  range_key    = "received_at"
+
+  attribute {
+    name = "event_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "received_at"
+    type = "S"
+  }
+
+  attribute {
+    name = "source_ip"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "source_ip-received_at-index"
+    hash_key        = "source_ip"
+    range_key       = "received_at"
+    projection_type = "ALL"
+  }
+
+  ttl {
+    attribute_name = "expires_at"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  tags = { Name = "${var.project}-soar-events" }
+}
