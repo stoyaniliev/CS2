@@ -89,7 +89,7 @@ variable "single_nat_gateway" {
 }
 
 variable "admin_ip_cidr" {
-  description = "Administrator public IP as a /32. Leave null to auto-detect."
+  description = "Administrator public IP as a /32. Leave null to auto-detect (see 00-myip.tf)."
   type        = string
   default     = null
 }

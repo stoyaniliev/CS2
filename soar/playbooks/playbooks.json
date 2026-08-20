@@ -1,0 +1,125 @@
+{
+  "version": "1.2",
+  "description": "Innovatech SOAR playbooks. Declarative: adding a response requires editing this file and re-running the pipeline, not changing engine code.",
+  "defaults": {
+    "internal_networks": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  },
+  "playbooks": [
+    {
+      "id": "PB-001",
+      "name": "External SSH brute force",
+      "enabled": true,
+      "description": "Repeated failed SSH authentication from a single external address. Blocked at the subnet boundary and reported.",
+      "match": {
+        "event_type": ["ssh_auth_failure", "SSHBruteForce"],
+        "severity": ["high", "critical"]
+      },
+      "conditions": {
+        "source_ip_is_external": true,
+        "threshold": {
+          "count": 5,
+          "window_minutes": 5,
+          "group_by": "source_ip"
+        }
+      },
+      "actions": [
+        {
+          "type": "block_ip",
+          "params": { "duration_minutes": 60, "scope": "platform" }
+        },
+        {
+          "type": "notify",
+          "params": {
+            "subject": "[SOAR] External SSH brute force blocked",
+            "priority": "high"
+          }
+        }
+      ]
+    },
+    {
+      "id": "PB-002",
+      "name": "Host compromise indicator",
+      "enabled": true,
+      "description": "Privilege escalation or malware indicator on a managed host. The host is isolated first and reported second: containment beats notification when an attacker may be active.",
+      "match": {
+        "event_type": [
+          "privilege_escalation_attempt",
+          "malware_detected",
+          "HostCompromiseIndicator"
+        ],
+        "severity": ["high", "critical"]
+      },
+      "conditions": {
+        "requires_target_instance": true
+      },
+      "actions": [
+        {
+          "type": "quarantine_host",
+          "params": { "preserve_for_forensics": true }
+        },
+        {
+          "type": "notify",
+          "params": {
+            "subject": "[SOAR] Host quarantined - compromise indicator",
+            "priority": "critical"
+          }
+        }
+      ]
+    },
+    {
+      "id": "PB-003",
+      "name": "Unauthorised port scan",
+      "enabled": true,
+      "description": "Reconnaissance from an external source. Blocked for a shorter period than a brute force, since scans are noisier and more often incidental.",
+      "match": {
+        "event_type": ["port_scan_detected", "PortScanDetected"],
+        "severity": ["medium", "high", "critical"]
+      },
+      "conditions": {
+        "source_ip_is_external": true
+      },
+      "actions": [
+        {
+          "type": "block_ip",
+          "params": { "duration_minutes": 30, "scope": "platform" }
+        },
+        {
+          "type": "notify",
+          "params": { "subject": "[SOAR] Port scan blocked", "priority": "medium" }
+        }
+      ]
+    },
+    {
+      "id": "PB-004",
+      "name": "Service unavailable",
+      "enabled": true,
+      "description": "An availability alert, not a security event. Deliberately notify-only: automatically isolating a host that is merely unhealthy would convert a partial outage into a total one.",
+      "match": {
+        "event_type": ["ServiceDown", "TargetDown", "cloudwatch_alarm"],
+        "severity": ["high", "critical"]
+      },
+      "actions": [
+        {
+          "type": "notify",
+          "params": { "subject": "[SOAR] Service availability alert", "priority": "high" }
+        }
+      ]
+    },
+    {
+      "id": "PB-005",
+      "name": "Database connection saturation",
+      "enabled": true,
+      "description": "Early warning that the PostgreSQL connection pool is near its limit.",
+      "match": {
+        "event_type": ["DatabaseConnectionsHigh", "RDSConnectionsHigh"],
+        "severity": ["medium", "high", "critical"]
+      },
+      "actions": [
+        {
+          "type": "notify",
+          "params": { "subject": "[SOAR] Database connections high", "priority": "medium" }
+        }
+      ]
+    }
+  ]
+}
