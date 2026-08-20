@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euxo pipefail
+exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+apt-get update -y
+apt-get install -y curl jq net-tools
+
+# --- IP forwarding: required for subnet routing -----------------------------
+cat >/etc/sysctl.d/99-tailscale.conf <<'EOF'
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+EOF
+sysctl -p /etc/sysctl.d/99-tailscale.conf
+
+# --- Tailscale ---------------------------------------------------------------
+curl -fsSL https://tailscale.com/install.sh | sh
+
+tailscale up \
+  --authkey="${tailscale_auth_key}" \
+  --advertise-routes="${advertise_routes}" \
+  --accept-routes \
+  --hostname="innovatech-aws-gw" \
+  --ssh
+
+# Wait for the on-prem route to appear, then confirm reachability.
+sleep 10
+tailscale status || true
+ip route show || true
+
+echo "hybrid gateway ready; advertising ${advertise_routes}, expecting ${onprem_cidr} from on-prem" \
+  | logger -t user-data

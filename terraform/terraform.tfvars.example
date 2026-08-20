@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars and fill in. Never commit the real file.
+
+admin_ip_cidr = "203.0.113.42/32"   # your public IP: curl ifconfig.me
+alert_email   = "stoyan.iliev@student.fontys.nl"
+
+# Optional overrides
+# region                  = "eu-central-1"
+# single_nat_gateway      = true
+# enable_resolver_inbound = true
+
+# Tailscale reusable auth key (tailscale.com > Settings > Keys)
+tailscale_auth_key = "tskey-auth-xxxxxxxxxxxx"
