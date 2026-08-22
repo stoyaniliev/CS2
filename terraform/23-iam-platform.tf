@@ -129,3 +129,13 @@ resource "aws_iam_role_policy_attachment" "k3s_ssm" {
   role       = aws_iam_role.k3s.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
+
+# ---------------------------------------------------------------------------
+# The SOAR console runs as a pod on this node and reads the operational tables
+# through the node's instance profile. Read-only: a flaw in the web layer
+# cannot be used to release a quarantined host or lift a block, because the
+# permission to do either does not exist here.
+#
+# Already granted above via ReadSoarState. Recorded separately so the console's
+# access is traceable to a stated purpose rather than inherited by accident.
+# ---------------------------------------------------------------------------

@@ -1,0 +1,77 @@
+# Validates and plans the infrastructure on every change.
+#
+# Runs on a self-hosted runner (REQ-NCA-P2-11). Applying is deliberately manual:
+# this environment contains a system with permission to change network state, and
+# a pipeline that can rebuild it unattended is a larger risk than the convenience
+# is worth. The pipeline proves the change is valid; a human decides when it lands.
+
+name: terraform
+
+on:
+  push:
+    branches: [main]
+    paths: ['terraform/**', 'soar/**']
+  pull_request:
+    paths: ['terraform/**', 'soar/**']
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: terraform
+
+jobs:
+  validate:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Formatting
+        run: terraform fmt -check -recursive -diff
+
+      - name: Init without backend
+        # No credentials needed for a syntax and reference check.
+        run: terraform init -backend=false
+
+      - name: Validate
+        run: terraform validate
+
+  python:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile the SOAR functions
+        run: |
+          python3 -m compileall -q ../soar
+          echo "all handlers compile"
+
+      - name: Validate playbooks
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          pb = json.load(open('../soar/playbooks/playbooks.json'))
+          ids = [p['id'] for p in pb['playbooks']]
+          assert len(ids) == len(set(ids)), f'duplicate playbook ids: {ids}'
+          known = {'block_ip', 'quarantine_host', 'notify'}
+          for p in pb['playbooks']:
+              for a in p.get('actions', []):
+                  assert a['type'] in known, f"{p['id']} references unknown action {a['type']}"
+              assert p.get('match'), f"{p['id']} has no match criteria"
+          print(f'{len(ids)} playbooks valid: {", ".join(ids)}')
+          PY
+
+  plan:
+    runs-on: self-hosted
+    needs: [validate, python]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Init
+        run: terraform init
+
+      - name: Plan
+        run: terraform plan -no-color -out=tf.plan
+
+      - name: Summary
+        run: terraform show -no-color tf.plan | tail -40

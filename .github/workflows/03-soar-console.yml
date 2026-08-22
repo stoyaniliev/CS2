@@ -1,0 +1,170 @@
+# Build the SOAR console container and deploy it to the k3s platform
+# (REQ-NCA-P2-07, REQ-NCA-P2-11).
+#
+# This is the pipeline the core assignment asks for when it says to deploy SOAR
+# components to the container platform using CI/CD. It builds an image, pushes
+# it to ECR, and rolls it out to k3s.
+#
+# The image tag is the commit SHA rather than 'latest'. Two reasons: the running
+# revision can be traced back to a commit, and Kubernetes will not roll out a
+# change when the tag is unchanged, so 'latest' would silently deploy nothing.
+#
+# The runner reaches the cluster over SSH through the bastion, since the k3s API
+# has no public address.
+
+name: SOAR Console
+
+on:
+  push:
+    branches: [main]
+    paths: ['soar/console/**', '.github/workflows/03-soar-console.yml']
+  workflow_dispatch:
+
+env:
+  AWS_REGION: eu-central-1
+  ECR_REPO: 182460207849.dkr.ecr.eu-central-1.amazonaws.com/innovatech/soar
+  BASTION: ubuntu@63.183.208.221
+  K3S_NODE: 10.1.10.149
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build and push
+    runs-on: self-hosted
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive the image tag
+        id: meta
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the application compiles before building an image
+        run: python3 -m py_compile soar/console/app.py
+
+      - name: Authenticate to ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "${ECR_REPO%/*}"
+
+      - name: Build
+        working-directory: soar/console
+        run: |
+          docker build \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            -t "${ECR_REPO}:console-${{ steps.meta.outputs.tag }}" \
+            -t "${ECR_REPO}:console-latest" .
+
+      - name: Smoke test the image before it leaves the runner
+        run: |
+          docker run -d --name smoke -p 18080:8080 \
+            -e AWS_REGION="$AWS_REGION" \
+            "${ECR_REPO}:console-${{ steps.meta.outputs.tag }}"
+          for i in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1:18080/healthz > /dev/null 2>&1; then
+              echo "container healthy after ${i}s"
+              docker rm -f smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::container failed its health check"
+          docker logs smoke
+          docker rm -f smoke
+          exit 1
+
+      - name: Push
+        run: |
+          docker push "${ECR_REPO}:console-${{ steps.meta.outputs.tag }}"
+          docker push "${ECR_REPO}:console-latest"
+
+      - name: Scan results
+        continue-on-error: true
+        run: |
+          sleep 20
+          aws ecr describe-image-scan-findings \
+            --repository-name innovatech/soar \
+            --image-id imageTag="console-${{ steps.meta.outputs.tag }}" \
+            --region "$AWS_REGION" \
+            --query 'imageScanFindings.findingSeverityCounts' --output json || \
+            echo "scan not complete yet"
+
+  deploy:
+    name: Deploy to k3s
+    runs-on: self-hosted
+    needs: build
+    # No approval gate. A container rollout is reversible in one command, uses
+    # maxUnavailable: 0 so there is no gap in service, and the image was smoke
+    # tested on the runner before it was pushed. Requiring a human here would be
+    # ceremony without a corresponding risk.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare the SSH key
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.BASTION_SSH_KEY }}" > ~/.ssh/innovatech.pem
+          chmod 600 ~/.ssh/innovatech.pem
+          ssh-keyscan -H "${BASTION#*@}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Render the manifests
+        run: |
+          sed -e "s|IMAGE_PLACEHOLDER|${ECR_REPO}:console-${{ needs.build.outputs.tag }}|" \
+              -e "s|VERSION_PLACEHOLDER|${{ needs.build.outputs.tag }}|" \
+              soar/console/k8s/deployment.yaml > /tmp/soar-console.yaml
+          grep -E 'image:|APP_VERSION' -A1 /tmp/soar-console.yaml | head
+
+      - name: Apply through the bastion
+        run: |
+          SSH="ssh -i ~/.ssh/innovatech.pem -o StrictHostKeyChecking=accept-new \
+               -J ${BASTION} ubuntu@${K3S_NODE}"
+
+          scp -i ~/.ssh/innovatech.pem -o StrictHostKeyChecking=accept-new \
+              -J ${BASTION} /tmp/soar-console.yaml ubuntu@${K3S_NODE}:/tmp/
+
+          $SSH 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && \
+                kubectl apply -f /tmp/soar-console.yaml'
+
+      - name: Wait for the rollout to complete
+        run: |
+          ssh -i ~/.ssh/innovatech.pem -o StrictHostKeyChecking=accept-new \
+            -J ${BASTION} ubuntu@${K3S_NODE} \
+            'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && \
+             kubectl -n soar rollout status deployment/soar-console --timeout=180s'
+
+      - name: Verify the deployed version is the one just built
+        run: |
+          running=$(ssh -i ~/.ssh/innovatech.pem -o StrictHostKeyChecking=accept-new \
+            -J ${BASTION} ubuntu@${K3S_NODE} \
+            'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && \
+             kubectl -n soar get deploy soar-console -o jsonpath="{.spec.template.spec.containers[0].image}"')
+          echo "running image: ${running}"
+          [ "${running##*:}" = "console-${{ needs.build.outputs.tag }}" ]
+
+      - name: Confirm the service answers
+        run: |
+          ssh -i ~/.ssh/innovatech.pem -o StrictHostKeyChecking=accept-new \
+            -J ${BASTION} ubuntu@${K3S_NODE} \
+            'curl -fsS http://127.0.0.1:30080/healthz && echo " console responding"'
+
+      - name: Summary
+        run: |
+          {
+            echo "### SOAR console deployed"
+            echo ""
+            echo "Image tag: \`console-${{ needs.build.outputs.tag }}\`"
+            echo ""
+            echo "Reachable on the k3s node at port 30080. Tunnel with:"
+            echo ""
+            echo '```'
+            echo "ssh -i innovatech-key.pem -L 8080:${K3S_NODE}:30080 ${BASTION} -N"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the key from the runner
+        if: always()
+        run: rm -f ~/.ssh/innovatech.pem
