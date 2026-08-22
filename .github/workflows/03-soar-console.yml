@@ -123,7 +123,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare the SSH key
+      - name: Resolve the current instance addresses
+        working-directory: terraform
+        continue-on-error: true
+        run: |
+          # The addresses in the env block are defaults. Terraform knows the
+          # real ones, and both change whenever an instance is replaced.
+          terraform init -input=false > /dev/null 2>&1 || true
+          if terraform output -raw bastion_public_ip > /dev/null 2>&1; then
+            echo "BASTION=ubuntu@$(terraform output -raw bastion_public_ip)" >> "$GITHUB_ENV"
+            echo "K3S_NODE=$(terraform output -raw k3s_private_ip)" >> "$GITHUB_ENV"
+            echo "resolved from terraform state:"
+            echo "  bastion  $(terraform output -raw bastion_public_ip)"
+            echo "  k3s node $(terraform output -raw k3s_private_ip)"
+          else
+            echo "No terraform state available, using the workflow defaults."
+          fi
+
+      - name: Prepare SSH access
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           KEY=~/.ssh/innovatech.pem
@@ -132,57 +149,63 @@ jobs:
 
           # A secret pasted from Windows carries CRLF line endings, which
           # OpenSSH rejects with an unhelpful "Permission denied (publickey)"
-          # rather than a parse error. Strip them.
+          # rather than a parse error.
           tr -d '\r' < "$KEY" > "$KEY.clean" && mv "$KEY.clean" "$KEY"
           chmod 600 "$KEY"
 
-          # Validate before using it, so a malformed secret fails here with a
-          # clear message instead of three steps later as an auth failure.
           if [ ! -s "$KEY" ]; then
-            echo "::error::BASTION_SSH_KEY is empty or unset. Add it under Settings, Secrets and variables, Actions."
+            echo "::error::BASTION_SSH_KEY is empty or unset."
             exit 1
           fi
-          if ! head -1 "$KEY" | grep -q 'BEGIN.*PRIVATE KEY'; then
-            echo "::error::BASTION_SSH_KEY does not start with a PEM header. Paste the whole file including the BEGIN and END lines."
+          if ! ssh-keygen -y -f "$KEY" > /tmp/pub 2>/tmp/keyerr; then
+            echo "::error::BASTION_SSH_KEY is not a valid private key."
+            cat /tmp/keyerr
             exit 1
           fi
-          if ! ssh-keygen -y -f "$KEY" > /dev/null 2>&1; then
-            echo "::error::BASTION_SSH_KEY is not a valid private key. Re-copy innovatech-key.pem in full."
-            exit 1
-          fi
-          echo "key accepted, $(wc -l < "$KEY") lines, fingerprint:"
-          ssh-keygen -lf <(ssh-keygen -y -f "$KEY")
+          echo "key fingerprint from the secret:"
+          ssh-keygen -lf /tmp/pub
 
-          ssh-keyscan -H "${BASTION#*@}" >> ~/.ssh/known_hosts 2>/dev/null
+          # An SSH config rather than command line flags, because -J does NOT
+          # pass -i to the jump hop. The identity applies only to the final
+          # destination, so the connection to the bastion itself falls back to
+          # default identities, finds none, and fails with "Permission denied
+          # (publickey)" that looks like a problem with the key. Naming the
+          # IdentityFile per host removes the ambiguity.
+          cat > ~/.ssh/config <<CONF
+          Host bastion
+            HostName ${BASTION#*@}
+            User ubuntu
+            IdentityFile ~/.ssh/innovatech.pem
+            IdentitiesOnly yes
+            StrictHostKeyChecking accept-new
+            UserKnownHostsFile ~/.ssh/known_hosts
 
-      - name: Resolve the current instance addresses
-        working-directory: terraform
-        continue-on-error: true
+          Host k3s
+            HostName ${K3S_NODE}
+            User ubuntu
+            IdentityFile ~/.ssh/innovatech.pem
+            IdentitiesOnly yes
+            ProxyJump bastion
+            StrictHostKeyChecking accept-new
+            UserKnownHostsFile ~/.ssh/known_hosts
+          CONF
+          chmod 600 ~/.ssh/config
+          sed -i 's/^          //' ~/.ssh/config
+          echo "--- ssh config ---"
+          cat ~/.ssh/config
+
+      - name: Confirm both hops authenticate
         run: |
-          terraform init -input=false > /dev/null 2>&1 || true
-          # The addresses in the workflow env block are defaults. Terraform
-          # knows the real ones, and both change when an instance is replaced.
-          if terraform output -raw bastion_public_ip > /dev/null 2>&1; then
-            echo "BASTION=ubuntu@$(terraform output -raw bastion_public_ip)" >> "$GITHUB_ENV"
-            echo "K3S_NODE=$(terraform output -raw k3s_private_ip)" >> "$GITHUB_ENV"
-            echo "resolved from terraform state:"
-            echo "  bastion  $(terraform output -raw bastion_public_ip)"
-            echo "  k3s node $(terraform output -raw k3s_private_ip)"
-          else
-            echo "No terraform state available on this runner, using the workflow defaults."
-          fi
-
-      - name: Confirm the bastion accepts the key
-        run: |
-          if ! ssh -i ~/.ssh/innovatech.pem -o StrictHostKeyChecking=accept-new \
-                   -o BatchMode=yes -o ConnectTimeout=10 \
-                   "$BASTION" 'echo reachable'; then
-            echo "::error::Cannot authenticate to the bastion at ${BASTION}."
-            echo "Check that BASTION_SSH_KEY matches innovatech-key.pem, and that"
-            echo "the bastion address in the workflow env block is current:"
-            echo "  terraform output bastion_public_ip"
+          echo "bastion:"
+          ssh -o BatchMode=yes -o ConnectTimeout=10 bastion 'hostname' || {
+            echo "::error::Cannot authenticate to the bastion. Check BASTION_SSH_KEY matches innovatech-key.pem, and that your runner's public address is permitted by the bastion security group."
             exit 1
-          fi
+          }
+          echo "k3s node through the bastion:"
+          ssh -o BatchMode=yes -o ConnectTimeout=15 k3s 'hostname' || {
+            echo "::error::Reached the bastion but not the k3s node. Check the k3s address is current: terraform output k3s_private_ip"
+            exit 1
+          }
 
       - name: Render the manifests
         run: |
@@ -193,36 +216,25 @@ jobs:
 
       - name: Apply through the bastion
         run: |
-          SSH="ssh -i ~/.ssh/innovatech.pem -o StrictHostKeyChecking=accept-new \
-               -J ${BASTION} ubuntu@${K3S_NODE}"
-
-          scp -i ~/.ssh/innovatech.pem -o StrictHostKeyChecking=accept-new \
-              -J ${BASTION} /tmp/soar-console.yaml ubuntu@${K3S_NODE}:/tmp/
-
-          $SSH 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && \
-                kubectl apply -f /tmp/soar-console.yaml'
+          scp /tmp/soar-console.yaml k3s:/tmp/
+          ssh k3s 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && \
+                   kubectl apply -f /tmp/soar-console.yaml'
 
       - name: Wait for the rollout to complete
         run: |
-          ssh -i ~/.ssh/innovatech.pem -o StrictHostKeyChecking=accept-new \
-            -J ${BASTION} ubuntu@${K3S_NODE} \
-            'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && \
-             kubectl -n soar rollout status deployment/soar-console --timeout=180s'
+          ssh k3s 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && \
+                   kubectl -n soar rollout status deployment/soar-console --timeout=180s'
 
       - name: Verify the deployed version is the one just built
         run: |
-          running=$(ssh -i ~/.ssh/innovatech.pem -o StrictHostKeyChecking=accept-new \
-            -J ${BASTION} ubuntu@${K3S_NODE} \
-            'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && \
-             kubectl -n soar get deploy soar-console -o jsonpath="{.spec.template.spec.containers[0].image}"')
+          running=$(ssh k3s 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && \
+            kubectl -n soar get deploy soar-console -o jsonpath="{.spec.template.spec.containers[0].image}"')
           echo "running image: ${running}"
           [ "${running##*:}" = "console-${{ needs.build.outputs.tag }}" ]
 
       - name: Confirm the service answers
         run: |
-          ssh -i ~/.ssh/innovatech.pem -o StrictHostKeyChecking=accept-new \
-            -J ${BASTION} ubuntu@${K3S_NODE} \
-            'curl -fsS http://127.0.0.1:30080/healthz && echo " console responding"'
+          ssh k3s 'curl -fsS http://127.0.0.1:30080/healthz && echo " console responding"'
 
       - name: Summary
         run: |
@@ -240,4 +252,4 @@ jobs:
 
       - name: Remove the key from the runner
         if: always()
-        run: rm -f ~/.ssh/innovatech.pem
+        run: rm -f ~/.ssh/innovatech.pem ~/.ssh/config
