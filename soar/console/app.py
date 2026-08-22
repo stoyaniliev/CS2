@@ -93,15 +93,15 @@ PAGE = """<!doctype html>
 <div class="sub">Read-only view of the automated response record. Refreshes every 30 seconds.</div></header>
 <main>
 <div class="cards">
- <div class="card"><div class="n">{events}</div><div class="l">Events stored</div></div>
- <div class="card alert"><div class="n">{blocks}</div><div class="l">Active blocks</div></div>
- <div class="card alert"><div class="n">{quarantines}</div><div class="l">Hosts isolated</div></div>
+ <div class="card"><div class="n">__EVENTS__</div><div class="l">Events stored</div></div>
+ <div class="card alert"><div class="n">__BLOCKS__</div><div class="l">Active blocks</div></div>
+ <div class="card alert"><div class="n">__QUARANTINES__</div><div class="l">Hosts isolated</div></div>
 </div>
-<h2>Active network blocks</h2>{blocks_table}
-<h2>Quarantined hosts</h2>{quarantine_table}
-<h2>Recent events</h2>{events_table}
+<h2>Active network blocks</h2>__BLOCKS_TABLE__
+<h2>Quarantined hosts</h2>__QUARANTINE_TABLE__
+<h2>Recent events</h2>__EVENTS_TABLE__
 </main>
-<footer>Version {version} &middot; generated {generated}</footer>
+<footer>Version __VERSION__ &middot; generated __GENERATED__</footer>
 </body></html>"""
 
 
@@ -142,27 +142,39 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if self.path in ("/", "/index.html"):
-            s = summary()
-            html = PAGE.format(
-                events=s["counts"]["events"],
-                blocks=s["counts"]["active_blocks"],
-                quarantines=s["counts"]["quarantined_hosts"],
-                version=s["version"],
-                generated=s["generated_at"],
-                blocks_table=table(s["blocks"], [
-                    ("Address", "cidr", "mono"), ("NACL rule", "rule_number", "mono"),
-                    ("Playbook", "playbook_id", ""), ("Status", "status", ""),
-                    ("Expires", "expires_at_iso", "mono")]),
-                quarantine_table=table(s["quarantines"], [
-                    ("Instance", "instance_id", "mono"), ("Isolated at", "quarantined_at", "mono"),
-                    ("Playbook", "playbook_id", ""), ("Status", "status", ""),
-                    ("Reason", "reason", "")]),
-                events_table=table(s["events"], [
-                    ("Received", "received_at", "mono"), ("Type", "event_type", ""),
-                    ("Severity", "severity", ""), ("Source IP", "source_ip", "mono"),
-                    ("Target", "target_host", "")]),
-            )
-            self._send(200, html, "text/html; charset=utf-8")
+            try:
+                s = summary()
+                # Token substitution rather than str.format(): the stylesheet is
+                # full of braces and format() reads each one as a field.
+                subs = {
+                    "__EVENTS__": s["counts"]["events"],
+                    "__BLOCKS__": s["counts"]["active_blocks"],
+                    "__QUARANTINES__": s["counts"]["quarantined_hosts"],
+                    "__VERSION__": s["version"],
+                    "__GENERATED__": s["generated_at"],
+                    "__BLOCKS_TABLE__": table(s["blocks"], [
+                        ("Address", "cidr", "mono"), ("NACL rule", "rule_number", "mono"),
+                        ("Playbook", "playbook_id", ""), ("Status", "status", ""),
+                        ("Expires", "expires_at_iso", "mono")]),
+                    "__QUARANTINE_TABLE__": table(s["quarantines"], [
+                        ("Instance", "instance_id", "mono"), ("Isolated at", "quarantined_at", "mono"),
+                        ("Playbook", "playbook_id", ""), ("Status", "status", ""),
+                        ("Reason", "reason", "")]),
+                    "__EVENTS_TABLE__": table(s["events"], [
+                        ("Received", "received_at", "mono"), ("Type", "event_type", ""),
+                        ("Severity", "severity", ""), ("Source IP", "source_ip", "mono"),
+                        ("Target", "target_host", "")]),
+                }
+                html = PAGE
+                for token, value in subs.items():
+                    html = html.replace(token, str(value))
+                self._send(200, html, "text/html; charset=utf-8")
+            except Exception as exc:
+                # Return a readable error rather than closing the connection,
+                # which the browser reports only as an empty response.
+                import traceback
+                traceback.print_exc()
+                self._send(500, f"<pre>console error: {exc}</pre>", "text/html; charset=utf-8")
             return
 
         self._send(404, "not found", "text/plain")

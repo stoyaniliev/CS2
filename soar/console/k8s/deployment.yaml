@@ -27,6 +27,11 @@ spec:
         app: soar-console
         component: soar
     spec:
+      # The node's IAM role permits pulling from ECR, but containerd does not
+      # use IAM directly. A systemd timer on the node mints a fresh token every
+      # six hours and writes it here, because an ECR token expires after twelve.
+      imagePullSecrets:
+        - name: ecr-credentials
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

@@ -31,5 +31,49 @@ kubectl create namespace soar       --dry-run=client -o yaml | kubectl apply -f 
 curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
 unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install
 
+# --- ECR pull credentials ------------------------------------------------
+# containerd does not use the instance IAM role for registry auth, and an ECR
+# token expires after 12 hours, so a timer refreshes a Kubernetes pull secret.
+cat >/usr/local/bin/refresh-ecr-secret.sh <<'ECRSCRIPT'
+#!/bin/bash
+set -euo pipefail
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+export AWS_DEFAULT_REGION=eu-central-1
+REGISTRY="182460207849.dkr.ecr.eu-central-1.amazonaws.com"
+TOKEN=$(aws ecr get-login-password --region eu-central-1)
+for ns in soar default; do
+  kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl -n "$ns" create secret docker-registry ecr-credentials \
+    --docker-server="$REGISTRY" --docker-username=AWS --docker-password="$TOKEN" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+done
+ECRSCRIPT
+chmod +x /usr/local/bin/refresh-ecr-secret.sh
+
+cat >/etc/systemd/system/ecr-secret.service <<'ECRUNIT'
+[Unit]
+Description=Refresh the ECR pull secret for k3s
+After=k3s.service
+Wants=k3s.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/refresh-ecr-secret.sh
+ECRUNIT
+
+cat >/etc/systemd/system/ecr-secret.timer <<'ECRTIMER'
+[Unit]
+Description=Refresh the ECR pull secret every 6 hours
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=6h
+Persistent=true
+[Install]
+WantedBy=timers.target
+ECRTIMER
+
+systemctl daemon-reload
+systemctl enable --now ecr-secret.timer
+systemctl start ecr-secret.service || true
+
 touch /var/lib/cloud/k3s-bootstrap-complete
 echo "k3s bootstrap complete" | logger -t user-data
