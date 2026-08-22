@@ -25,7 +25,7 @@ name: Infrastructure
 on:
   push:
     branches: [main]
-        paths: ['terraform/**', 'soar/**', '.github/workflows/02-infrastructure.yml']
+    paths: ['terraform/**', 'soar/**', '.github/workflows/02-infrastructure.yml']
   pull_request:
     paths: ['terraform/**']
   workflow_dispatch:
