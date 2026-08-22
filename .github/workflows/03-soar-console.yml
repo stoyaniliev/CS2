@@ -33,7 +33,7 @@ env:
 
 defaults:
   run:
-    shell: 'C:\Program Files\Git\bin\bash.exe --noprofile --norc -eo pipefail {0}'
+    shell: 'C:\Git\bin\bash.exe --noprofile --norc -eo pipefail {0}'
 jobs:
   build:
     name: Build and push
