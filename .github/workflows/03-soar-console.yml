@@ -12,6 +12,11 @@
 # The runner reaches the cluster over SSH through the bastion, since the k3s API
 # has no public address.
 
+# Shell is pinned to Git Bash by absolute path. On Windows the runner resolves
+# 'bash' from PATH, and C:\Windows\System32\bash.exe (the WSL launcher) comes
+# first on a default install. With no WSL distro present that fails with
+# 'execvpe(/bin/bash) failed', which is confusing because the error looks like a
+# missing script rather than the wrong interpreter.
 name: SOAR Console
 
 on:
@@ -28,8 +33,7 @@ env:
 
 defaults:
   run:
-    shell: bash
-
+    shell: 'C:\Program Files\Git\bin\bash.exe --noprofile --norc -eo pipefail {0}'
 jobs:
   build:
     name: Build and push
@@ -44,7 +48,22 @@ jobs:
         run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
 
       - name: Verify the application compiles before building an image
-        run: python3 -m py_compile soar/console/app.py
+        run: |
+          PYBIN=""
+          # The Microsoft Store ships stub executables named python.exe and
+          # python3.exe that exist on PATH but only print an install message and
+          # exit 1, so presence is not enough. Each candidate is executed.
+          for c in python python3 py; do
+            if command -v "$c" >/dev/null 2>&1 && "$c" -c "import sys" >/dev/null 2>&1; then
+              PYBIN="$c"; break
+            fi
+          done
+          if [ -z "$PYBIN" ]; then
+            echo "::error::No working Python interpreter found. Install Python 3.10+ from python.org with Add to PATH enabled."
+            exit 1
+          fi
+          echo "using $PYBIN ($($PYBIN --version 2>&1))"
+          $PYBIN -m py_compile soar/console/app.py
 
       - name: Authenticate to ECR
         run: |
