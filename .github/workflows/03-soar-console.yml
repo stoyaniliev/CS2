@@ -33,7 +33,7 @@ env:
 
 defaults:
   run:
-    shell: 'C:\Git\bin\bash.exe --noprofile --norc -eo pipefail {0}'
+    shell: 'C:\Program Files\Git\bin\bash.exe --noprofile --norc -eo pipefail {0}'
 jobs:
   build:
     name: Build and push
@@ -126,9 +126,63 @@ jobs:
       - name: Prepare the SSH key
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          echo "${{ secrets.BASTION_SSH_KEY }}" > ~/.ssh/innovatech.pem
-          chmod 600 ~/.ssh/innovatech.pem
+          KEY=~/.ssh/innovatech.pem
+
+          printf '%s\n' "${{ secrets.BASTION_SSH_KEY }}" > "$KEY"
+
+          # A secret pasted from Windows carries CRLF line endings, which
+          # OpenSSH rejects with an unhelpful "Permission denied (publickey)"
+          # rather than a parse error. Strip them.
+          tr -d '\r' < "$KEY" > "$KEY.clean" && mv "$KEY.clean" "$KEY"
+          chmod 600 "$KEY"
+
+          # Validate before using it, so a malformed secret fails here with a
+          # clear message instead of three steps later as an auth failure.
+          if [ ! -s "$KEY" ]; then
+            echo "::error::BASTION_SSH_KEY is empty or unset. Add it under Settings, Secrets and variables, Actions."
+            exit 1
+          fi
+          if ! head -1 "$KEY" | grep -q 'BEGIN.*PRIVATE KEY'; then
+            echo "::error::BASTION_SSH_KEY does not start with a PEM header. Paste the whole file including the BEGIN and END lines."
+            exit 1
+          fi
+          if ! ssh-keygen -y -f "$KEY" > /dev/null 2>&1; then
+            echo "::error::BASTION_SSH_KEY is not a valid private key. Re-copy innovatech-key.pem in full."
+            exit 1
+          fi
+          echo "key accepted, $(wc -l < "$KEY") lines, fingerprint:"
+          ssh-keygen -lf <(ssh-keygen -y -f "$KEY")
+
           ssh-keyscan -H "${BASTION#*@}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Resolve the current instance addresses
+        working-directory: terraform
+        continue-on-error: true
+        run: |
+          terraform init -input=false > /dev/null 2>&1 || true
+          # The addresses in the workflow env block are defaults. Terraform
+          # knows the real ones, and both change when an instance is replaced.
+          if terraform output -raw bastion_public_ip > /dev/null 2>&1; then
+            echo "BASTION=ubuntu@$(terraform output -raw bastion_public_ip)" >> "$GITHUB_ENV"
+            echo "K3S_NODE=$(terraform output -raw k3s_private_ip)" >> "$GITHUB_ENV"
+            echo "resolved from terraform state:"
+            echo "  bastion  $(terraform output -raw bastion_public_ip)"
+            echo "  k3s node $(terraform output -raw k3s_private_ip)"
+          else
+            echo "No terraform state available on this runner, using the workflow defaults."
+          fi
+
+      - name: Confirm the bastion accepts the key
+        run: |
+          if ! ssh -i ~/.ssh/innovatech.pem -o StrictHostKeyChecking=accept-new \
+                   -o BatchMode=yes -o ConnectTimeout=10 \
+                   "$BASTION" 'echo reachable'; then
+            echo "::error::Cannot authenticate to the bastion at ${BASTION}."
+            echo "Check that BASTION_SSH_KEY matches innovatech-key.pem, and that"
+            echo "the bastion address in the workflow env block is current:"
+            echo "  terraform output bastion_public_ip"
+            exit 1
+          fi
 
       - name: Render the manifests
         run: |
