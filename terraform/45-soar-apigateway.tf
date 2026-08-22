@@ -50,8 +50,11 @@ resource "aws_api_gateway_rest_api" "soar" {
   description = "Private ingest endpoint for security events"
 
   endpoint_configuration {
-    types            = ["PRIVATE"]
-    vpc_endpoint_ids = [aws_vpc_endpoint.execute_api.id]
+    types = ["PRIVATE"]
+    vpc_endpoint_ids = [
+      aws_vpc_endpoint.execute_api.id,
+      aws_vpc_endpoint.execute_api_platform.id,
+    ]
   }
 
   tags = { Component = "soar" }
@@ -77,7 +80,10 @@ resource "aws_api_gateway_rest_api_policy" "soar" {
         Resource  = "${aws_api_gateway_rest_api.soar.execution_arn}/*"
         Condition = {
           StringNotEquals = {
-            "aws:SourceVpce" = aws_vpc_endpoint.execute_api.id
+            "aws:SourceVpce" = [
+              aws_vpc_endpoint.execute_api.id,
+              aws_vpc_endpoint.execute_api_platform.id,
+            ]
           }
         }
       },
@@ -147,7 +153,7 @@ resource "aws_api_gateway_method_settings" "prod" {
   stage_name  = aws_api_gateway_stage.prod.stage_name
   method_path = "*/*"
 
-  # The account-level CloudWatch role must exist before a stage can enable
+   # The account-level CloudWatch role must exist before a stage can enable
   # execution logging. No attribute links them, so the dependency is declared.
   depends_on = [aws_api_gateway_account.main]
 
@@ -156,6 +162,23 @@ resource "aws_api_gateway_method_settings" "prod" {
     logging_level   = "INFO"
   }
 }
+
+output "soar_ingest_url" {
+  description = "POST security events here. Resolvable only inside the VPCs and from on-prem."
+  value       = "https://${aws_api_gateway_rest_api.soar.id}.execute-api.${var.region}.amazonaws.com/prod/events"
+}
+
+output "soar_event_bus" {
+  value = aws_cloudwatch_event_bus.soar.name
+}
+
+# ---------------------------------------------------------------------------
+# API Gateway execution logging.
+#
+# The CloudWatch role is an account-level setting, not a per-API one, so it is
+# declared once here. Note this is shared account state: it affects every API
+# Gateway in the account, which is worth flagging in a shared environment.
+# ---------------------------------------------------------------------------
 
 resource "aws_iam_role" "apigw_cloudwatch" {
   name = "${var.project}-apigw-cloudwatch"
@@ -178,11 +201,52 @@ resource "aws_api_gateway_account" "main" {
   cloudwatch_role_arn = aws_iam_role.apigw_cloudwatch.arn
 }
 
-output "soar_ingest_url" {
-  description = "POST security events here. Resolvable only inside the VPCs and from on-prem."
-  value       = "https://${aws_api_gateway_rest_api.soar.id}.execute-api.${var.region}.amazonaws.com/prod/events"
+# ---------------------------------------------------------------------------
+# Second execute-api endpoint, in the platform spoke.
+#
+# An interface endpoint's private DNS only resolves inside the VPC that hosts
+# it. Alertmanager runs on k3s in the platform spoke, so without this it would
+# resolve the ingest URL to a public address, follow the default route out
+# through the NAT gateway, and be rejected by the API's resource policy for not
+# arriving via a VPC endpoint.
+#
+# The alternative is a customer-managed private hosted zone for
+# execute-api.<region>.amazonaws.com associated with every spoke, aliased to
+# the hub endpoint. That scales better across many spokes and is the right
+# answer at production size; a second endpoint is simpler to reason about at
+# this one and costs roughly EUR 7/month.
+# ---------------------------------------------------------------------------
+
+resource "aws_security_group" "api_endpoint_platform" {
+  name        = "${var.project}-api-endpoint-platform"
+  description = "HTTPS to the private SOAR ingest API from the platform spoke"
+  vpc_id      = module.platform_spoke.vpc_id
+
+  ingress {
+    description = "HTTPS from workloads in the platform spoke"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [var.platform_cidr]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { Name = "${var.project}-api-endpoint-platform-sg" }
 }
 
-output "soar_event_bus" {
-  value = aws_cloudwatch_event_bus.soar.name
+resource "aws_vpc_endpoint" "execute_api_platform" {
+  vpc_id              = module.platform_spoke.vpc_id
+  service_name        = "com.amazonaws.${var.region}.execute-api"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = module.platform_spoke.private_subnet_ids
+  security_group_ids  = [aws_security_group.api_endpoint_platform.id]
+  private_dns_enabled = true
+
+  tags = { Name = "${var.project}-execute-api-endpoint-platform" }
 }
