@@ -1,0 +1,291 @@
+# Deploy the observability stack (REQ-NCA-P2-05, P2-08, P2-09, P2-10).
+#
+# The stack was previously installed by running a script on the node by hand,
+# which left it as the only part of the system not defined declaratively and
+# not reproducible without a person. The Helm values are now versioned files in
+# this repository and this pipeline applies them, so a rebuilt k3s node gets
+# its stack back without intervention.
+#
+# Terraform's Helm provider was the alternative. It is more literally
+# "infrastructure as code", but it needs to reach the Kubernetes API at plan
+# time, which from this runner means carrying a kubeconfig through the bastion,
+# and it creates an ordering problem because the cluster is defined in the same
+# configuration. Helm driven by a pipeline against versioned values achieves
+# the same reproducibility with fewer moving parts. The provider approach is
+# recorded as the production recommendation.
+
+# Shell is pinned to Git Bash by absolute path. On Windows the runner resolves
+# 'bash' from PATH, and C:\Windows\System32\bash.exe (the WSL launcher) comes
+# first on a default install.
+name: Observability
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'observability/**'
+      - '.github/workflows/04-observability.yml'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why this run (e.g. redeploy after node rebuild)'
+        required: false
+        default: 'manual redeploy'
+
+env:
+  AWS_REGION: eu-central-1
+
+defaults:
+  run:
+    shell: 'C:\Git\bin\bash.exe --noprofile --norc -eo pipefail {0}'
+
+jobs:
+  validate:
+    name: Validate values and rules
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse every values file and manifest
+        run: |
+          PYBIN=""
+          for c in python python3 py; do
+            if command -v "$c" >/dev/null 2>&1 && "$c" -c "import sys" >/dev/null 2>&1; then
+              PYBIN="$c"; break
+            fi
+          done
+          [ -n "$PYBIN" ] || { echo "::error::No working Python interpreter"; exit 1; }
+
+          "$PYBIN" - <<'PY'
+          import glob, sys
+
+          # PyYAML is not guaranteed on the runner, so fall back to a
+          # structural check rather than skipping validation entirely.
+          try:
+              import yaml
+              loader = lambda p: list(yaml.safe_load_all(open(p)))
+              mode = "parsed"
+          except ImportError:
+              def loader(p):
+                  text = open(p).read()
+                  if '\t' in text:
+                      raise ValueError("tab character in YAML")
+                  return [text]
+              mode = "structure-checked"
+
+          files = sorted(glob.glob('observability/values/*.yaml') +
+                         glob.glob('observability/manifests/*.yaml'))
+          if not files:
+              print("no files found"); sys.exit(1)
+
+          for f in files:
+              loader(f)
+              print(f"  {mode}: {f}")
+          print(f"{len(files)} files valid")
+          PY
+
+      - name: Confirm every placeholder is one the pipeline substitutes
+        run: |
+          KNOWN="__REGION__ __S3_BUCKET__ __SOAR_INGEST_URL__ __GRAFANA_PASSWORD__ __DEMO_TARGET__ __DEMO_INSTANCE_ID__"
+          found=$(grep -ohE '__[A-Z_]+__' observability/values/*.yaml | sort -u)
+          fail=0
+          for token in $found; do
+            case " $KNOWN " in
+              *" $token "*) echo "  ok  $token" ;;
+              *) echo "::error::$token appears in a values file but nothing substitutes it"; fail=1 ;;
+            esac
+          done
+          exit $fail
+
+  deploy:
+    name: Deploy to k3s
+    runs-on: self-hosted
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve environment values from Terraform
+        id: tf
+        working-directory: terraform
+        run: |
+          terraform init -input=false > /dev/null
+          {
+            echo "BASTION=ubuntu@$(terraform output -raw bastion_public_ip)"
+            echo "K3S_NODE=$(terraform output -raw k3s_private_ip)"
+            echo "S3_BUCKET=$(terraform output -raw observability_bucket)"
+            echo "SOAR_INGEST_URL=$(terraform output -raw soar_ingest_url)"
+            echo "DEMO_INSTANCE_ID=$(terraform output -raw demo_workstation_id)"
+          } >> "$GITHUB_ENV"
+          echo "resolved:"
+          terraform output -raw bastion_public_ip; echo
+          terraform output -raw observability_bucket; echo
+
+      - name: Look up the demo target address
+        run: |
+          ip=$(aws ec2 describe-instances --instance-ids "$DEMO_INSTANCE_ID" \
+                 --query 'Reservations[0].Instances[0].PrivateIpAddress' \
+                 --output text --region "$AWS_REGION")
+          echo "DEMO_TARGET=$ip" >> "$GITHUB_ENV"
+          echo "demo target $ip"
+
+      - name: Prepare SSH access
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          KEY=~/.ssh/innovatech.pem
+          printf '%s\n' "${{ secrets.BASTION_SSH_KEY }}" > "$KEY"
+          tr -d '\r' < "$KEY" > "$KEY.clean" && mv "$KEY.clean" "$KEY"
+          chmod 600 "$KEY"
+          ssh-keygen -y -f "$KEY" > /dev/null || {
+            echo "::error::BASTION_SSH_KEY is not a valid private key"; exit 1; }
+
+          # An SSH config, because -J does not pass -i to the jump hop.
+          cat > ~/.ssh/config <<CONF
+          Host bastion
+            HostName ${BASTION#*@}
+            User ubuntu
+            IdentityFile ~/.ssh/innovatech.pem
+            IdentitiesOnly yes
+            StrictHostKeyChecking accept-new
+            UserKnownHostsFile ~/.ssh/known_hosts
+
+          Host k3s
+            HostName ${K3S_NODE}
+            User ubuntu
+            IdentityFile ~/.ssh/innovatech.pem
+            IdentitiesOnly yes
+            ProxyJump bastion
+            StrictHostKeyChecking accept-new
+            UserKnownHostsFile ~/.ssh/known_hosts
+          CONF
+          chmod 600 ~/.ssh/config
+          sed -i 's/^          //' ~/.ssh/config
+          ssh -o BatchMode=yes -o ConnectTimeout=15 k3s 'hostname'
+
+      - name: Render the values files
+        run: |
+          mkdir -p /tmp/obs
+          GRAFANA_PASSWORD='${{ secrets.GRAFANA_PASSWORD }}'
+          if [ -z "$GRAFANA_PASSWORD" ]; then
+            echo "::error::Secret GRAFANA_PASSWORD is not set."
+            exit 1
+          fi
+
+          for f in observability/values/*.yaml; do
+            out="/tmp/obs/$(basename "$f")"
+            sed -e "s|__REGION__|${AWS_REGION}|g" \
+                -e "s|__S3_BUCKET__|${S3_BUCKET}|g" \
+                -e "s|__SOAR_INGEST_URL__|${SOAR_INGEST_URL}|g" \
+                -e "s|__DEMO_TARGET__|${DEMO_TARGET}|g" \
+                -e "s|__DEMO_INSTANCE_ID__|${DEMO_INSTANCE_ID}|g" \
+                -e "s|__GRAFANA_PASSWORD__|${GRAFANA_PASSWORD}|g" \
+                "$f" > "$out"
+            # Nothing should remain unsubstituted, and a leftover token would
+            # deploy a broken configuration rather than fail loudly.
+            if grep -q '__[A-Z_]*__' "$out"; then
+              echo "::error::unsubstituted placeholder in $(basename "$f")"
+              grep -n '__[A-Z_]*__' "$out"
+              exit 1
+            fi
+            echo "  rendered $(basename "$f")"
+          done
+          cp observability/manifests/*.yaml /tmp/obs/
+
+      - name: Copy to the node
+        run: |
+          ssh k3s 'rm -rf ~/obs && mkdir -p ~/obs'
+          scp /tmp/obs/* k3s:~/obs/
+
+      - name: Deploy the stack
+        run: |
+          ssh k3s 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+          helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
+          helm repo update >/dev/null
+
+          echo "=== kube-prometheus-stack ==="
+          helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+            --namespace monitoring --values ~/obs/kube-prometheus-stack.yaml \
+            --wait --timeout 12m
+
+          echo "=== loki ==="
+          helm upgrade --install loki grafana/loki \
+            --namespace monitoring --values ~/obs/loki.yaml --wait --timeout 10m
+
+          echo "=== alloy ==="
+          helm upgrade --install alloy grafana/alloy \
+            --namespace monitoring --values ~/obs/alloy.yaml --wait --timeout 5m
+
+          echo "=== cloudwatch-exporter ==="
+          helm upgrade --install cloudwatch-exporter \
+            prometheus-community/prometheus-cloudwatch-exporter \
+            --namespace monitoring --values ~/obs/cloudwatch-exporter.yaml \
+            --wait --timeout 5m
+
+          echo "=== alert rules ==="
+          kubectl apply -f ~/obs/soar-alert-rules.yaml
+          REMOTE
+
+      - name: Verify the stack is healthy
+        run: |
+          ssh k3s 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
+          echo "--- pods ---"
+          kubectl -n monitoring get pods
+
+          notready=$(kubectl -n monitoring get pods --no-headers \
+            | awk '$3 != "Running" && $3 != "Completed" {print $1}')
+          if [ -n "$notready" ]; then
+            echo "::error::pods not running: $notready"
+            exit 1
+          fi
+
+          echo "--- alert rules loaded ---"
+          kubectl -n monitoring get prometheusrule soar-rules \
+            -o jsonpath='{.metadata.name} has {.spec.groups[*].name}{"\n"}'
+
+          echo "--- endpoints ---"
+          for p in 30030 30090 30093; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}/" || echo 000)
+            echo "  port ${p}: HTTP ${code}"
+          done
+          REMOTE
+
+      - name: Confirm the monitoring to SOAR path
+        run: |
+          # REQ-NCA-P2-09. If Alertmanager cannot reach the ingest endpoint,
+          # the observability stack is not part of the SOAR system, whatever
+          # the configuration says.
+          ssh k3s "curl -s -o /dev/null -w 'ingest endpoint returned HTTP %{http_code}\n' \
+            -X POST '${SOAR_INGEST_URL}' -H 'Content-Type: application/json' \
+            -d '{\"event_type\":\"pipeline_connectivity_check\",\"severity\":\"low\",\"description\":\"observability pipeline post-deploy check\"}'"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Observability stack deployed"
+            echo ""
+            echo "| Component | Purpose |"
+            echo "|---|---|"
+            echo "| Prometheus | metrics, alert rule evaluation |"
+            echo "| Alertmanager | routes alerts to the SOAR ingest API |"
+            echo "| Loki | logs, chunks in \`${S3_BUCKET}\` |"
+            echo "| Alloy | pod and host log collection |"
+            echo "| Grafana | dashboards |"
+            echo "| cloudwatch-exporter | SOAR metrics into Prometheus |"
+            echo ""
+            echo "Tunnel to Grafana:"
+            echo '```'
+            echo "ssh -i innovatech-key.pem -L 3000:${K3S_NODE}:30030 ${BASTION} -N"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove credentials from the runner
+        if: always()
+        run: rm -f ~/.ssh/innovatech.pem ~/.ssh/config

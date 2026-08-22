@@ -1,0 +1,47 @@
+# Grafana Alloy: collects pod logs and host syslog, ships to Loki.
+alloy:
+  configMap:
+    content: |
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.write.default.receiver]
+      }
+
+      // Host syslog, so the node's own auth events are searchable alongside
+      // the on-premises ones.
+      local.file_match "syslog" {
+        path_targets = [{"__path__" = "/var/log/{syslog,auth.log}", "job" = "node-syslog"}]
+      }
+
+      loki.source.file "syslog" {
+        targets    = local.file_match.syslog.targets
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push"
+        }
+      }
+  mounts:
+    varlog: true

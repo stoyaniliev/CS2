@@ -1,0 +1,51 @@
+# Loki with S3 as the chunk and index store.
+#
+# This is where the requirement for monitoring data in durable cloud storage is
+# met. Local disk holds only a short write-ahead buffer, and retention becomes
+# an S3 lifecycle rule rather than a disk-space problem.
+
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false
+  commonConfig: { replication_factor: 1 }
+  schemaConfig:
+    configs:
+      - from: 2024-04-01
+        store: tsdb
+        object_store: s3
+        schema: v13
+        index: { prefix: index_, period: 24h }
+  storage:
+    type: s3
+    bucketNames:
+      chunks: __S3_BUCKET__
+      ruler: __S3_BUCKET__
+    s3:
+      region: __REGION__
+      s3ForcePathStyle: false
+      insecure: false
+      # No credentials: the node instance profile is used.
+  limits_config:
+    retention_period: 720h
+    ingestion_rate_mb: 8
+  compactor:
+    working_directory: /var/loki/compactor
+    delete_request_store: s3
+    retention_enabled: true
+
+singleBinary:
+  replicas: 1
+  persistence: { enabled: true, size: 10Gi }
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { memory: 1Gi }
+
+backend:   { replicas: 0 }
+read:      { replicas: 0 }
+write:     { replicas: 0 }
+chunksCache:  { enabled: false }
+resultsCache: { enabled: false }
+lokiCanary:   { enabled: false }
+test:         { enabled: false }
+gateway:      { enabled: true }

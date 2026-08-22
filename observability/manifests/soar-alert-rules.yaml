@@ -1,0 +1,65 @@
+# Alert rules that generate SOAR events.
+#
+# The soar_event_type label is what the collector maps onto a playbook, so
+# alert names and playbook match criteria stay decoupled: renaming an alert
+# does not silently stop a playbook firing.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: soar-rules
+  namespace: monitoring
+  labels: { release: monitoring }
+spec:
+  groups:
+    - name: innovatech.availability
+      rules:
+        - alert: TargetDown
+          expr: up == 0
+          for: 1m
+          labels:
+            severity: high
+            soar_event_type: ServiceDown
+          annotations:
+            summary: "{{ $labels.job }} target {{ $labels.instance }} is unreachable"
+            description: "Prometheus has failed to scrape {{ $labels.instance }} for over a minute."
+
+        - alert: HostHighCpu
+          expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+          for: 3m
+          labels:
+            severity: warning
+            soar_event_type: HostHighCpu
+          annotations:
+            summary: "CPU above 85% on {{ $labels.instance }}"
+
+        - alert: HostLowDisk
+          expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes) * 100 < 15
+          for: 5m
+          labels:
+            severity: warning
+            soar_event_type: HostLowDisk
+          annotations:
+            summary: "Less than 15% disk free on {{ $labels.instance }}"
+
+    - name: innovatech.soar-health
+      rules:
+        # The SOAR system monitoring itself (REQ-NCA-P2-08). A SOAR failure
+        # becomes a SOAR event.
+        - alert: SoarActionsFailing
+          expr: sum(rate(aws_innovatech_soar_actions_failed_sum[5m])) > 0
+          for: 2m
+          labels:
+            severity: critical
+            soar_event_type: SoarDegraded
+          annotations:
+            summary: "SOAR response actions are failing"
+            description: "One or more automated responses could not be executed. Security events may be going unhandled."
+
+        - alert: SoarDeadLetterQueueNotEmpty
+          expr: aws_sqs_approximate_number_of_messages_visible_maximum{queue_name=~".*dlq"} > 0
+          for: 5m
+          labels:
+            severity: high
+            soar_event_type: SoarDegraded
+          annotations:
+            summary: "Messages parked in a SOAR dead-letter queue"

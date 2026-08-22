@@ -1,0 +1,62 @@
+# Brings the SOAR functions' embedded metrics into Prometheus, so the SOAR
+# system's own health appears on the same dashboard as everything else
+# (REQ-NCA-P2-08).
+aws:
+  region: __REGION__
+  role: ""          # instance profile
+  aws_access_key_id: ""
+  aws_secret_access_key: ""
+
+serviceMonitor:
+  enabled: true
+  namespace: monitoring
+  labels: { release: monitoring }
+
+config: |-
+  region: __REGION__
+  period_seconds: 60
+  metrics:
+    - aws_namespace: Innovatech/SOAR
+      aws_metric_name: EventsIngested
+      aws_dimensions: [Source, Severity]
+      aws_statistics: [Sum]
+    - aws_namespace: Innovatech/SOAR
+      aws_metric_name: PlaybookMatched
+      aws_dimensions: [PlaybookId]
+      aws_statistics: [Sum]
+    - aws_namespace: Innovatech/SOAR
+      aws_metric_name: ActionsDispatched
+      aws_dimensions: [ActionType, PlaybookId]
+      aws_statistics: [Sum]
+    - aws_namespace: Innovatech/SOAR
+      aws_metric_name: ActionsExecuted
+      aws_dimensions: [ActionType]
+      aws_statistics: [Sum]
+    - aws_namespace: Innovatech/SOAR
+      aws_metric_name: ActionsFailed
+      aws_dimensions: [ActionType]
+      aws_statistics: [Sum]
+    - aws_namespace: Innovatech/SOAR
+      aws_metric_name: ActionsSkipped
+      aws_dimensions: [ActionType, Reason]
+      aws_statistics: [Sum]
+    - aws_namespace: Innovatech/SOAR
+      aws_metric_name: EventsUnmatched
+      aws_dimensions: [EventType]
+      aws_statistics: [Sum]
+    - aws_namespace: AWS/Lambda
+      aws_metric_name: Invocations
+      aws_dimensions: [FunctionName]
+      aws_statistics: [Sum]
+    - aws_namespace: AWS/Lambda
+      aws_metric_name: Errors
+      aws_dimensions: [FunctionName]
+      aws_statistics: [Sum]
+    - aws_namespace: AWS/Lambda
+      aws_metric_name: Duration
+      aws_dimensions: [FunctionName]
+      aws_statistics: [Average, Maximum]
+    - aws_namespace: AWS/SQS
+      aws_metric_name: ApproximateNumberOfMessagesVisible
+      aws_dimensions: [QueueName]
+      aws_statistics: [Maximum]

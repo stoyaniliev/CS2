@@ -1,0 +1,95 @@
+# Prometheus, Alertmanager and Grafana.
+#
+# Placeholders marked __LIKE_THIS__ are substituted at deploy time from
+# Terraform outputs and repository secrets, so no environment-specific value is
+# committed to the repository.
+
+fullnameOverride: monitoring
+
+prometheus:
+  prometheusSpec:
+    retention: 6h            # short locally; long-term history lives in S3
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    resources:
+      requests: { cpu: 200m, memory: 512Mi }
+      limits:   { memory: 2Gi }
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources: { requests: { storage: 10Gi } }
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    additionalScrapeConfigs:
+      - job_name: onprem-nodes
+        static_configs:
+          - targets: []      # populated once on-premises hosts join the tailnet
+            labels: { environment: onpremises }
+      - job_name: demo-workstation
+        static_configs:
+          - targets: ['__DEMO_TARGET__:9100']
+            labels:
+              environment: cloud
+              role: demo-target
+              instance_id: __DEMO_INSTANCE_ID__
+  service:
+    type: NodePort
+    nodePort: 30090
+
+alertmanager:
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: soar-ingest
+      group_by: ['alertname', 'instance']
+      group_wait: 10s
+      group_interval: 30s
+      repeat_interval: 1h
+    receivers:
+      - name: soar-ingest
+        webhook_configs:
+          # REQ-NCA-P2-09: monitoring is the primary event source for SOAR.
+          - url: '__SOAR_INGEST_URL__'
+            send_resolved: false
+            max_alerts: 0
+  service:
+    type: NodePort
+    nodePort: 30093
+
+grafana:
+  adminPassword: '__GRAFANA_PASSWORD__'
+  service:
+    type: NodePort
+    nodePort: 30030
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s:30030/"
+    users:
+      default_theme: dark
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      access: proxy
+      url: http://loki-gateway.monitoring.svc.cluster.local
+      jsonData: { maxLines: 1000 }
+    - name: CloudWatch
+      type: cloudwatch
+      jsonData:
+        authType: default          # the node instance profile
+        defaultRegion: __REGION__
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+
+nodeExporter: { enabled: true }
+kubeStateMetrics: { enabled: true }
+
+# Control-plane components k3s does not expose separately
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+kubeEtcd: { enabled: false }
