@@ -128,7 +128,7 @@ data "aws_iam_policy_document" "action_quarantine" {
     actions   = ["ec2:DescribeInstances"]
     resources = ["*"]
   }
-    statement {
+  statement {
     sid       = "IsolateTaggedInstancesOnly"
     effect    = "Allow"
     actions   = ["ec2:ModifyInstanceAttribute"]
@@ -150,9 +150,9 @@ data "aws_iam_policy_document" "action_quarantine" {
   # the account. Release is deliberately a human action (see
   # scripts/restore-quarantined-host.ps1).
   statement {
-    sid       = "AttachQuarantineGroupOnly"
-    effect    = "Allow"
-    actions   = ["ec2:ModifyInstanceAttribute"]
+    sid     = "AttachQuarantineGroupOnly"
+    effect  = "Allow"
+    actions = ["ec2:ModifyInstanceAttribute"]
     resources = [
       "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:security-group/${aws_security_group.quarantine.id}",
     ]

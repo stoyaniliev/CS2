@@ -153,7 +153,7 @@ resource "aws_api_gateway_method_settings" "prod" {
   stage_name  = aws_api_gateway_stage.prod.stage_name
   method_path = "*/*"
 
-   # The account-level CloudWatch role must exist before a stage can enable
+  # The account-level CloudWatch role must exist before a stage can enable
   # execution logging. No attribute links them, so the dependency is declared.
   depends_on = [aws_api_gateway_account.main]
 
