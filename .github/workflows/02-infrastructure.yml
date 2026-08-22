@@ -41,9 +41,19 @@ env:
   AWS_REGION: eu-central-1
   TF_IN_AUTOMATION: 'true'
 
+  # terraform.tfvars is gitignored because it holds a live Tailscale auth key,
+  # so the runner has no copy of it. Terraform reads TF_VAR_* from the
+  # environment, which lets the values come from repository secrets instead of
+  # a file that must never be committed.
+  #
+  # admin_ip_cidr is deliberately absent: it auto-detects, and the runner sits
+  # on the same connection as the operator, so the detected address is correct.
+  TF_VAR_tailscale_auth_key: ${{ secrets.TAILSCALE_AUTH_KEY }}
+  TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+
 defaults:
   run:
-    shell: 'C:\Git\bin\bash.exe --noprofile --norc -eo pipefail {0}'
+    shell: 'C:\Program Files\Git\bin\bash.exe --noprofile --norc -eo pipefail {0}'
     working-directory: terraform
 
 jobs:
@@ -82,13 +92,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Confirm credentials
+      - name: Confirm credentials and required variables
         run: |
           if ! aws sts get-caller-identity > /dev/null 2>&1; then
             echo "::error::No valid AWS session on the runner. Run 'aws sso login' and retry."
             exit 1
           fi
           aws sts get-caller-identity --query Arn --output text
+
+          missing=0
+          if [ -z "${TF_VAR_tailscale_auth_key}" ]; then
+            echo "::error::Secret TAILSCALE_AUTH_KEY is not set. Add it under Settings, Secrets and variables, Actions."
+            missing=1
+          fi
+          if [ -z "${TF_VAR_alert_email}" ]; then
+            echo "::error::Secret ALERT_EMAIL is not set."
+            missing=1
+          fi
+          [ "$missing" -eq 0 ] || exit 1
+          echo "required variables present" 
 
       - name: Initialise
         run: terraform init -input=false
