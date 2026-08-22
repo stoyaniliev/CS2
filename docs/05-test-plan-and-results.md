@@ -51,6 +51,8 @@ The end-to-end tests are scripted (`scripts/test-soar-bruteforce.ps1`, `scripts/
 | F-12 | Event stored before queueing | Inspect DynamoDB after submission | Event present | **Pass** |
 | F-13 | SOAR unit suite | `python3 -m unittest discover` | All tests pass | **Pass**, 50 tests, one defect found |
 | F-14 | Playbook integrity gate | Pipeline validation job | Malformed playbooks fail the build | **Pass** |
+| F-15 | Observability deployed by pipeline | Observability workflow | Stack applied from versioned values, all pods Running | **Pass**, 1m36s |
+| F-16 | Monitoring to SOAR path verified per deployment | Post-deploy check in the pipeline | HTTP 200 from inside the cluster | **Pass** |
 
 ## 3.1 F-01. Capability probe
 
@@ -261,13 +263,13 @@ The `ActionsSkipped` metric with a reason dimension exists so that refusals are 
 | P2-02 Network segmentation | F-04, F-05 |
 | P2-03 Private resource access | F-05, F-06, F-07 |
 | P2-04 Internal DNS | F-04 (zone associations), design document |
-| P2-05 Observability stack | F-09, F-10 |
+| P2-05 Observability stack | F-09, F-10, F-15 |
 | P2-06 Event-driven SOAR | E-01, E-02, R-01 |
 | P2-07 Serverless components | F-09, E-01, E-02 |
 | P2-08 SOAR self-monitoring | F-11 |
-| P2-09 Observability in SOAR | F-07 (Alertmanager webhook path) |
-| P2-10 Infrastructure as Code | F-02, F-03, R-02, R-03 |
-| P2-11 CI/CD | F-13, F-14, and the pipeline definitions |
+| P2-09 Observability in SOAR | F-07, F-16 (verified on every deployment) |
+| P2-10 Infrastructure as Code | F-02, F-03, F-15, R-02, R-03 |
+| P2-11 CI/CD | F-13, F-14, F-15, F-16, and the four pipeline definitions |
 | P2-12 DevOps platform | GitHub repository, Actions, self-hosted runner |
 
 # 8. Not tested

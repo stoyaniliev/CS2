@@ -175,6 +175,69 @@ The least-privilege claim is the strongest security argument in the project, and
 
 ---
 
+## Evidence for the CI/CD sections
+
+### P-01, all four workflows
+
+**File:** `evidence/p01-workflows-list.png`
+**Goes in:** Design Document, Section 6.2
+**How:** Actions tab, the left sidebar listing SOAR CI, Infrastructure, SOAR Console, Observability
+**Must show:** all four names
+
+One image covering P2-10, P2-11 and P2-12.
+
+### P-02, the run list with mixed outcomes
+
+**File:** `evidence/p02-run-list.png`
+**Goes in:** Design Document, Section 6.2
+**How:** Actions tab, the run list from a single commit
+**Must show:** SOAR CI green, SOAR Console green, Infrastructure waiting
+
+This is the best available image of the risk grading, because it shows two pipelines deploying on their own while a third stops for review, from the same push. Far more convincing than the paragraph describing it.
+
+### P-03, the approval prompt
+
+**File:** `evidence/p03-approval-prompt.png`
+**Goes in:** Design Document, Section 6.2
+**How:** The pending Infrastructure run, Review deployments
+**Must show:** the plan summary with the instance replacements, and the approve or reject buttons
+
+Caption it with why it stopped: the plan replaces two instances, which is what the gate exists for.
+
+### P-04, SOAR CI passing
+
+**File:** `evidence/p04-soar-ci-green.png`
+**Goes in:** Test Plan and Results, Section 3.1a
+**How:** A successful SOAR CI run, Unit tests job, test output expanded
+**Must show:** the tests running and the OK line
+
+### P-05, the observability deployment summary
+
+**File:** `evidence/p05-observability-deploy.png`
+**Goes in:** Design Document, Section 6.2
+**How:** A successful Observability run, the job summary
+**Must show:** the component table and the total duration
+
+### P-06, the SOAR console
+
+**File:** `evidence/p06-soar-console.png`
+**Goes in:** Design Document, Section 6.2, and SOAR Design, Section 3.2
+**How:** Tunnel to the console and screenshot the page
+**Must show:** the three counters, at least one block row, at least one quarantine row, and some events
+
+Run a SOAR test first if the tables are thin. A block showing status `expired` is worth having, because it proves the scheduled expiry function ran, which nothing else demonstrates visually.
+
+### P-07, images in ECR
+
+**File:** `evidence/p07-ecr-images.png`
+**Goes in:** Design Document, Section 6.2
+**How:** ECR console, the `innovatech/soar` repository
+**Must show:** the image tags, which are commit SHAs rather than `latest`
+
+Supports the tagging decision. Each tag traces to a commit.
+
+---
+
 ## Inserting them in Word
 
 Both documents are Word files, so the images go in directly. For each one:
@@ -194,3 +257,5 @@ Four images carry the demonstration if the live run fails:
 - E-04 and E-05, the instance before and after quarantine
 
 Put each pair side by side on one slide with a single sentence underneath. That is the story in two slides, and it is the story the whole project exists to tell.
+
+Two more are worth a slide each: P-02, the run list showing two pipelines deploying while a third waits for review, and P-06, the console with real blocks and quarantines on it.

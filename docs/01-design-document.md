@@ -208,7 +208,7 @@ The deciding factor was not any single feature but the Alertmanager webhook rece
 
 ## 4.2 Deployment
 
-The stack runs on k3s in the platform spoke:
+The stack runs on k3s in the platform spoke and is deployed by pipeline from Helm values held in the repository:
 
 | Component | Role |
 |---|---|
@@ -220,6 +220,10 @@ The stack runs on k3s in the platform spoke:
 | cloudwatch-exporter | Pulls SOAR and Lambda metrics into Prometheus |
 
 k3s was used rather than EKS because the account's service control policy denies `eks:*`. k3s is a CNCF-conformant Kubernetes distribution, so the manifests and Helm charts are unchanged from what EKS would accept. The workload is portable even though the control plane is not managed.
+
+The values files carry placeholders that the pipeline substitutes from Terraform outputs and repository secrets, so no environment-specific value is committed. Two checks guard that substitution: the validate job rejects any placeholder the pipeline does not know how to fill, and the render step fails if one survives into the output. Without them a typo would deploy a configuration containing a literal placeholder, which starts cleanly and behaves wrongly.
+
+This was not the original arrangement. The stack was first installed by running a script on the node by hand, which left it as the only part of the system not reproducible without a person, and meant a rebuilt node came back with no monitoring at all. Section 6.2 describes the pipeline that replaced it.
 
 ## 4.3 Monitoring data storage
 
@@ -361,6 +365,9 @@ The repository is organised so that each concern is separately reviewable:
 | SOAR CI | Any change under `soar/` | Compile every handler, run the unit suite, validate playbook integrity, package the function archives |
 | Infrastructure | Changes under `terraform/` or `soar/` | Format, validate, plan, apply, then verify the deployed state |
 | SOAR Console | Changes under `soar/console/` | Build the container, smoke test it, push to ECR, roll it out to k3s |
+| Observability | Changes under `observability/` | Validate the Helm values, render them from Terraform outputs, deploy the stack, verify every pod and the monitoring-to-SOAR path |
+
+Between them these cover every deployable part of the system. The only step that remains manual is approving a plan that would destroy a resource, and that is manual deliberately.
 
 ### Testing
 
@@ -387,6 +394,14 @@ The console pipeline has no gate at all. A container rollout is reversible in on
 Container images are tagged with the commit SHA rather than `latest`, for one operational reason and one practical one.
 
 The running revision can be traced back to a commit, which matters when something is behaving oddly and the question is what changed. And Kubernetes will not roll out a deployment whose image reference is unchanged, so a pipeline that always pushes `latest` appears to succeed while deploying nothing. After each rollout the pipeline asserts that the running image is the one it just built, which would catch that failure mode if it ever reappeared.
+
+### Deploying the observability stack
+
+The Helm values for Prometheus, Alertmanager, Loki, Alloy, Grafana and cloudwatch-exporter are versioned files under `observability/values/`, and the alert rules are a manifest under `observability/manifests/`. The pipeline resolves environment-specific values from Terraform state, renders them, and applies them with `helm upgrade --install`.
+
+After deploying it verifies three things: that every pod in the namespace is Running, that the alert rules loaded, and that a POST from inside the cluster to the private SOAR ingest endpoint returns HTTP 200. That last check matters more than it looks. If Alertmanager cannot reach the ingest endpoint then the observability stack has stopped being part of the SOAR system, whatever its configuration says, and REQ-NCA-P2-09 is silently unmet. Verifying it on every deployment turns that from an assumption into a checked property.
+
+Terraform's Helm provider was the alternative and is more literally infrastructure as code. It was not used because it needs to reach the Kubernetes API at plan time, which from a runner outside the VPC means carrying a kubeconfig through the bastion, and because it creates an ordering problem: the cluster and the workloads running on it would live in the same configuration and the same state. Helm driven by a pipeline against versioned values achieves the same reproducibility with fewer moving parts. Separating cluster and workload state, then adopting the provider, is the production recommendation.
 
 ### Deploying SOAR to the container platform
 

@@ -185,7 +185,13 @@ terraform taint aws_instance.k3s_server
 terraform apply
 ```
 
-Around four minutes to Ready. The observability stack is not restored automatically; re-run `observability/deploy-observability.sh` on the new node afterwards, and note the new private address from the outputs.
+Around four minutes to Ready. Then run the Observability workflow to restore the monitoring stack:
+
+Actions, Observability, Run workflow.
+
+It reads the new node address from Terraform state, so nothing needs editing after a rebuild. Roughly ten minutes for the four Helm charts.
+
+The SOAR console comes back the same way: Actions, SOAR Console, Run workflow. It is not restored automatically either, because nothing under `soar/console/` changed.
 
 Verify the bootstrap actually completed before deploying anything onto it:
 
@@ -210,6 +216,7 @@ Remember that a spoke needing the private ingest API also needs either its own i
 | SOAR CI | any change under `soar/` | none, it is the gate |
 | Infrastructure | changes under `terraform/` or `soar/` | automatic if the plan is additive, approval if it destroys anything |
 | SOAR Console | changes under `soar/console/` | none |
+| Observability | changes under `observability/` | none |
 
 ## 6.2 Why infrastructure apply behaves differently depending on the plan
 
@@ -223,7 +230,17 @@ To force the reviewed path for a change you want to look at first, trigger the w
 
 Settings, Environments, `production`, Required reviewers. Without at least one reviewer configured, the gated job proceeds without pausing, which quietly removes the protection.
 
-## 6.4 The console
+## 6.4 Redeploying the observability stack
+
+Actions, Observability, Run workflow. Safe to run at any time: `helm upgrade --install` is idempotent, so an unchanged stack is a no-op.
+
+Run it after rebuilding the k3s node, after changing anything under `observability/`, and as the first thing to try if monitoring is behaving oddly, since a clean redeploy is faster than diagnosing drift.
+
+The values files hold placeholders rather than real values. Everything environment-specific comes from Terraform state at deploy time, so the files never need editing when an address or bucket name changes.
+
+The last step posts a test event to the SOAR ingest endpoint from inside the cluster. If that step fails, Alertmanager cannot reach the ingest API, which means monitoring has stopped feeding the response pipeline even though both halves look healthy on their own.
+
+## 6.5 The console
 
 Deployed by pipeline on any change under `soar/console/`. Reach it by tunnelling to the k3s node:
 
@@ -240,7 +257,7 @@ kubectl -n soar get pods
 kubectl -n soar rollout status deployment/soar-console
 ```
 
-## 6.5 Running the tests locally
+## 6.6 Running the tests locally
 
 ```
 cd soar/tests

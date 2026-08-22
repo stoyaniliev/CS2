@@ -80,6 +80,18 @@ I also watched the architecture behave well under the failure, which was reassur
 
 **I wrote a bootstrap that races its own network.** The k3s user data does a single `curl` to fetch the installer, and the routes it needs are created in the same Terraform apply. When Transit Gateway attachments were slow, the node came up with no internet, the install failed silently under `set -e`, and I did not notice until I tried to use the cluster. The repair was `terraform taint` and `terraform apply`, which rebuilt the node from code in four minutes and incidentally proved the infrastructure genuinely reproduces rather than just being described. But the weakness is real. A retry loop or a pre-baked image is the correct answer, and I documented it rather than quietly patching it, because it is the kind of fragility that only appears when a system is actually run.
 
+## 3.5 A gap I only saw because a pipeline stopped me
+
+Near the end I pushed an infrastructure change and the pipeline paused, waiting for approval, because the plan would replace both EC2 instances. My own risk-grading rule had caught it.
+
+Looking at what would break, I realised the observability stack would not come back. Prometheus, Grafana, Loki and Alertmanager were installed by a script I had run on the node by hand. Everything else in the project was defined in code and deployed by pipeline; that one part was not, and I had not noticed because it had been working since I set it up.
+
+That is a hole in REQ-NCA-P2-10, which asks for the cloud components and the SOAR system to be defined and configured declaratively. A bash script calling `helm install` is imperative, and it was not in version control in any meaningful sense because the configuration lived inside the script rather than as files of its own.
+
+So I moved the Helm values into the repository as versioned files and wrote a fourth pipeline to apply them. It resolves the environment-specific values from Terraform state at deploy time, so nothing needs editing after a node is replaced, and it verifies afterwards that every pod is running and that Alertmanager can still reach the SOAR ingest endpoint.
+
+Two things I take from this. The gap existed for two days and I could not see it, because working software looks the same whether or not it can be rebuilt. And the thing that exposed it was a safety control I had built for a different reason: I added the approval gate to stop a pipeline deleting infrastructure unattended, and what it actually did first was make me look properly at what a rebuild would cost.
+
 # 4. What I would do differently
 
 **Probe with write actions, not read actions.** The single most expensive mistake of the period, and entirely avoidable.
@@ -87,6 +99,8 @@ I also watched the architecture behave well under the failure, which was reassur
 **Start the repository before the first file.** Every hour without it was an hour where mistakes were invisible.
 
 **Design the refusal conditions before the action.** Both destructive actions ended up with explicit guards, but I added them while writing the handlers rather than deciding them first. For a system permitted to change production on its own, what it must never do is the more important half of the specification, and it deserves to be written down before the code.
+
+**Ask what happens if each component is destroyed, before finishing.** The observability gap would have been obvious the moment I asked it, and I only got there because a pipeline forced the question. "Can this be rebuilt without me" is a better test of infrastructure as code than "is it working".
 
 **Budget documentation as work, not as write-up.** I treated it as something that happens after building. It took most of a day, and doing it earlier would have improved the build, because writing down why a choice was made is a good way to notice that it was the wrong choice.
 
@@ -106,7 +120,7 @@ The response capability works and is demonstrable. A correlated brute-force patt
 
 What is not finished, stated honestly: the on-premises virtual machines were never joined to the tailnet, so the hybrid path is implemented and deployed but not exercised end to end from a physical on-premises host. The cloud side of that path is proven and the syslog parser is verified, but the physical link is untested and I have recorded it as such rather than implying otherwise.
 
-The observability single point of failure and the bootstrap race are both known, documented, and have named fixes I did not have time to apply. I would rather hand over a system with three honest limitations than one where the limitations are undiscovered.
+The observability node is still a single point of failure and the bootstrap race is still there. Both are documented with named fixes I did not have time to apply, though the stack on that node can now be restored by running one pipeline rather than by hand. I would rather hand over a system with three honest limitations than one where the limitations are undiscovered.
 
 # 7. Closing
 
