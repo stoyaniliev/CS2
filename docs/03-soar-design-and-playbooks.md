@@ -336,7 +336,19 @@ The rule engine is not touched at any point. That is the property the EventBridg
 | Ingest DLQ depth | Zero | Above zero, events failing evaluation repeatedly |
 | Action DLQ depth | Zero | Above zero, dispatches undeliverable after retries |
 
-## 9.2 Common situations
+## 9.2 Reading the dashboard honestly
+
+The panels are designed so that non-zero failure and refusal counts are informative rather than embarrassing, and they should be read that way.
+
+**Actions failed above zero** means a response could not be executed. During this project it meant an IAM permission had been reverted by a file overwrite, and the dashboard is where that became visible. The correct reaction is to open the action's log group, not to assume the number is noise.
+
+**Actions refused above zero** is usually the system working. The reason label says which guard fired. `protected_range` means an internal address was correctly not blocked. `not_soarable` means an instance was correctly not isolated. `already_blocked` means a repeated event was correctly ignored. These are the safety guards leaving a trace, and their absence over a long period is more suspicious than their presence.
+
+**Unmatched events rising** is a coverage gap rather than a fault. It means real events are arriving that no playbook handles. The event type label says which, and that is the best available guide to what should be automated next.
+
+A dashboard showing nothing but zeros across every panel usually means the system is idle, but it can also mean the metrics pipeline is broken. The two look identical. Run a test and watch the numbers move before concluding the system is healthy.
+
+## 9.3 Common situations
 
 **An alert fired but nothing happened.** Check the rule engine log. Every non-match is logged with a reason. Usually `severity mismatch` or `below threshold`.
 
@@ -346,7 +358,7 @@ The rule engine is not touched at any point. That is the property the EventBridg
 
 **The block list is full.** The scheduled expiry function has failed or is disabled. Check its log group, then run `scripts/clear-soar-blocks.ps1` to reset.
 
-## 9.3 Emergency stop
+## 9.4 Emergency stop
 
 If the system is responding incorrectly and needs to stop immediately, disable the queue trigger. Events continue to be collected and stored, but nothing is evaluated or acted on:
 

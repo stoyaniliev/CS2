@@ -43,11 +43,11 @@ The system described here addresses all three.
 |---|---|
 | P2-01 Design-for-failure | 3.5, 7 |
 | P2-02 Network segmentation | 3.2, 3.3 |
-| P2-03 Private cloud resource access | 3.4, 5.3 |
+| P2-03 Private cloud resource access | 3.4, 5.4 |
 | P2-04 Internal cloud DNS resolution | 3.6 |
 | P2-05 Observability stack research | 4.1 |
-| P2-06 Event-driven SOAR architecture | 5.1, 5.2 |
-| P2-07 Serverless SOAR components | 5.4 |
+| P2-06 Event-driven SOAR architecture | 5.1, 5.2, 5.3 |
+| P2-07 Serverless SOAR components | 5.5 |
 | P2-08 SOAR self-monitoring | 4.4 |
 | P2-09 Observability as part of SOAR | 4.3 |
 | P2-10 Infrastructure as Code | 6.1 |
@@ -90,7 +90,9 @@ Claiming more than that would be dishonest. A design that is genuinely portable 
 
 # 3. Network design
 
-![Network architecture](diagrams/network-architecture.png)
+![](diagrams/network-architecture.png)
+
+*Figure 1: as-built architecture. Note that `corp-server`, the on-premises event source, is a simulated host inside the platform spoke rather than physical hardware on the 192.168.100.0/24 network. That network is designed and routed for, but no physical machine was joined within the project window, and it is drawn dashed for that reason.*
 
 ## 3.1 Address plan
 
@@ -286,6 +288,15 @@ Four rows, ordered by the question an operator asks first.
 
 The ordering is deliberate. An operator opening this during an incident sees whether responses are firing before seeing anything else, because that is the question that determines whether they need to intervene manually.
 
+![](evidence/o04-soar-dashboard.png){width=6.1in}
+
+![](evidence/o04-soar-dashboard-pt2.png){width=6.1in}
+
+*Figures 16 and 17: the SOAR Operations dashboard with real data. The non-zero failure and refusal counters are not defects in the capture. Three failures are the authorisation regression described in the test results, and two refusals are the idempotency guard declining to re-block an address already blocked. Both are recorded here deliberately: a dashboard that has only ever shown zeros has not been shown to work. The scrape target panel at the bottom includes the on-premises server, so the machine that reports intrusions is itself monitored.*
+
+
+The counters for failures and refusals are placed alongside the success counters rather than hidden on a separate page, because a dashboard that only shows good news is not a monitoring tool. During this project the failure counter is what made a reverted IAM permission visible, and the refusal counter is what distinguishes a safety guard declining to act from the system doing nothing at all. Both are expected to be non-zero at times, and an operator who has never seen either move does not know what they look like.
+
 ```{=openxml}
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
@@ -294,7 +305,7 @@ The ordering is deliberate. An operator opening this during an incident sees whe
 
 ## 5.1 Event-driven architecture (REQ-NCA-P2-06)
 
-![SOAR event pipeline](diagrams/soar-pipeline.png)
+![](diagrams/soar-pipeline.png)
 
 | Stage | Component | What happens |
 |---|---|---|
@@ -416,6 +427,11 @@ The repository is organised so that each concern is separately reviewable:
 | SOAR Console | Changes under `soar/console/` | Build the container, smoke test it, push to ECR, roll it out to k3s |
 | Observability | Changes under `observability/` | Validate the Helm values, render them from Terraform outputs, deploy the stack, verify every pod and the monitoring-to-SOAR path |
 
+![](evidence/p01-workflows-list.png){width=2.4in}
+
+*Figure 19: the four pipelines. Between them they cover every deployable part of the system.*
+
+
 Between them these cover every deployable part of the system. The only step that remains manual is approving a plan that would destroy a resource, and that is manual deliberately.
 
 ### Testing
@@ -435,6 +451,15 @@ The pipeline applies infrastructure changes on merge without waiting for anyone,
 This resolves what initially looked like a conflict between two correct positions. Changes should deploy automatically, and a pipeline should never delete production infrastructure unattended. Those only contradict each other if risk is treated as uniform. Adding a Lambda function and destroying a Transit Gateway attachment are not the same event and do not warrant the same ceremony. The plan output already states which one is happening, so the pipeline reads it and behaves accordingly.
 
 In practice the changes made most often, a new playbook, an updated handler, an additional alert rule, deploy with no human involvement at all. The changes that could cause an outage stop and wait.
+
+![](evidence/p02-run-list.png){width=6.1in}
+
+*Figure 20: the grading in one frame. From a single commit, SOAR CI and SOAR Console deployed on their own, while Infrastructure stopped and waited. The difference is not the pipeline; it is what the plan contained.*
+
+![](evidence/p03-approval-prompt.png){width=5.6in}
+
+*Figure 21: why that run stopped. The plan replaces two EC2 instances, so it routed to an environment requiring review rather than applying unattended. The reviewer sees the plan summary before deciding.*
+
 
 The console pipeline has no gate at all. A container rollout is reversible in one command, the deployment sets `maxUnavailable: 0` so there is no gap in service, and the image is smoke tested on the runner before it is pushed.
 
@@ -457,6 +482,11 @@ Terraform's Helm provider was the alternative and is more literally infrastructu
 The core assignment asks for SOAR components deployed to the container platform through CI/CD. The response pipeline itself runs on Lambda, for the reasons in Section 5.5, so the containerised component is the SOAR console: a read-only view of the operational record, built as an image, pushed to ECR, and rolled out to k3s by pipeline.
 
 It exists because that record lives across three DynamoDB tables and CloudWatch, and during an incident nobody wants four browser tabs open to answer what happened and what was done about it. It runs unprivileged with a read-only root filesystem, drops all capabilities, and holds no write permissions, so a flaw in the web layer cannot be used to release a quarantined host or lift a block.
+
+![](evidence/p06-soar-console.png){width=6.1in}
+
+*Figure 18: the console. Active blocks, quarantined hosts and recent events in one view. The block shown has status "expired", which is the scheduled expiry function having lifted it; the events below it are the on-premises authentication failures arriving from corp-server.*
+
 
 ```{=openxml}
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
@@ -513,9 +543,9 @@ Approximate steady-state monthly cost at the deployed scale:
 | Route 53 Resolver inbound endpoint | 90 |
 | Interface VPC endpoints (execute-api × 2) | 14 |
 | EC2, k3s t3.large | 60 |
-| EC2, gateway t3.small, demo t3.micro | 22 |
+| EC2, gateway t3.small, demo t3.micro, corp-server t3.micro | 29 |
 | S3, DynamoDB, Lambda, SQS, SNS, EventBridge | < 5 |
-| **Total** | **≈ 256** |
+| **Total** | **≈ 263** |
 
 The Resolver inbound endpoint is the largest single line and is behind a feature flag. Disabling it when hybrid DNS is not being demonstrated reduces the total by roughly a third; VPC-internal resolution is unaffected.
 

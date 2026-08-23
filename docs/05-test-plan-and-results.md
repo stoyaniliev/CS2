@@ -135,6 +135,23 @@ BEFORE AFTER
 
 Elapsed from first event to network change: under 25 seconds.
 
+![](evidence/e01-bruteforce-test-output.png){width=5.4in}
+
+*Figure 2: the scripted test. Five events submitted, the threshold met on the fifth, and a network ACL entry created. The verdict asserts on the presence of a DENY rule that did not exist before the run.*
+
+![](evidence/e02-nacl-before.png){width=6.1in}
+
+*Figure 3: the platform network ACL before the test. Rule 100 permits all traffic; the asterisk entry is the implicit default deny.*
+
+![](evidence/e03-nacl-after.png){width=6.1in}
+
+*Figure 4: the same screen after the test. Rule 101 denies 203.0.113.66/32 and was created by the block_ip function. Nothing was clicked in the console between Figures 3 and 4.*
+
+![](evidence/e09-dynamodb-block.png){width=6.1in}
+
+*Figure 5: the corresponding record in DynamoDB, carrying the playbook that decided it, the rule number allocated, the reason, and the expiry the scheduled function will act on.*
+
+
 **Significance.** This is the demonstration the previous submission lacked. The system detected a pattern that no single event revealed, decided on a response from a declarative rule, and changed the network. Nothing was triggered manually and no operator was involved.
 
 ## 4.2 E-02. PB-002, host compromise indicator
@@ -153,6 +170,25 @@ Elapsed from first event to network change: under 25 seconds.
 | **Respond** | **Security group changed from `sg-0eb7e12fcddcdfed3` to `sg-0b4ece4aff6a3eebe`** |
 | Record | Original groups stored for restoration |
 | State | Instance remains `Running`, forensics preserved |
+
+![](evidence/e06-quarantine-test-output.png){width=4.6in}
+
+*Figure 6: the quarantine test. The security group changes from the normal group to the isolation group, and the record is written with the originals preserved for restoration.*
+
+![](evidence/e04-instance-normal.png){width=6.1in}
+
+*Figure 7: the demo workstation before isolation, carrying the normal security group with two inbound rules and one outbound rule.*
+
+![](evidence/e05-instance-quarantined.png){width=6.1in}
+
+![](evidence/e05-instance-quarantined-pt2.png){width=6.1in}
+
+*Figures 8 and 9: the same instance after isolation. The security group is now the quarantine group, both rule tables read "No rules to display", and the instance state is still Running. The empty tables are the isolation: security groups are default-deny, so a group with no rules permits nothing in either direction.*
+
+![](evidence/e10-notification-email.png){width=6.1in}
+
+*Figure 10: the notification produced by the same playbook. It states what was detected and that the response has already been executed, rather than asking the reader to act.*
+
 
 ## 4.3 E-03. On-premises syslog event source
 
@@ -197,6 +233,21 @@ Fixed by adding the missing patterns, and guarded by a test asserting that every
 **What links them.** Both were failures of the gap between two components rather than of either component alone, and neither produced an error anywhere an operator would look. The forwarder is the only part of this system that runs unattended on a host nobody logs into, and it was the only part with no tests. That correlation is not a coincidence.
 
 Run with `scripts/test-soar-onprem-syslog.ps1`.
+
+![](evidence/o03-onprem-test.png){width=6.1in}
+
+![](evidence/o03-onprem-test-pt2.png){width=6.1in}
+
+*Figures 11 and 12: the on-premises test. The three panels in the middle show the same six events at three points in the chain: what sshd wrote, what the agent forwarded, and what reached the event store. The timestamps line up, which is what makes this evidence rather than assertion. The rule engine then declines to act, because the source address is internal.*
+
+![](evidence/o01-forwarder-active.png){width=6.1in}
+
+*Figure 13: the forwarder agent on corp-server, active and logging each line it forwards.*
+
+![](evidence/o02-authlog.png){width=6.1in}
+
+*Figure 14: the raw authentication log on the corporate server. These lines were written by sshd in response to real connection attempts. The agent reads exactly this; nothing in the pipeline is fabricated.*
+
 
 ## 4.4 E-04. Idempotency
 
@@ -244,6 +295,11 @@ Run with `scripts/test-soar-onprem-syslog.ps1`.
 **The fix improved the design.** Granting only the quarantine group. Rather than all security groups. Means the role can move a host *into* isolation and cannot move it out. A broader grant would have worked equally well functionally and been strictly worse. Restoration is now necessarily a human action, which is the correct behaviour for a decision that depends on an investigation.
 
 **Re-test.** E-02 passed.
+
+![](evidence/e07-iam-failure-logs.png){width=6.1in}
+
+*Figure 15: the authorisation failure. The message names the security group ARN rather than the instance, which is what revealed that ModifyInstanceAttribute authorises against both. The ActionsFailed metric is emitted in the same log stream, so the failure was visible on the dashboard rather than silent.*
+
 
 ## 5.2 R-02. Platform node loss and rebuild
 
@@ -329,6 +385,24 @@ The secret had been created once, by hand, during the initial deployment. Fiftee
 
 **Note on how this test came about.** The approval gate stopped an earlier accidental attempt at the same change. Being forced to review the plan prompted the question of what would break, which exposed that the observability stack was not reproducible at the time. The control found a design flaw before it found a destructive change, and this test only became safe to run because of what it found.
 
+## 5.7 R-07. A dashboard that rendered but showed nothing
+
+**Not a designed test.** The SOAR Operations dashboard deployed successfully, imported cleanly, and displayed "No data" in every panel that mattered.
+
+**What passed anyway.** The observability pipeline reported success. The ConfigMap existed and carried the right label. Grafana imported it. Every panel rendered. The dead-letter-queue panel even showed data. Nothing anywhere reported a fault.
+
+**Two root causes, both in the queries.**
+
+`cloudwatch_exporter` prefixes AWS-owned namespaces with `aws_`, so `AWS/Lambda` becomes `aws_lambda_*`. It does not prefix custom namespaces, so `Innovatech/SOAR` becomes `innovatech_soar_*`. The dashboard queried `aws_innovatech_soar_*`, a name that does not exist. The Lambda and SQS panels worked precisely because those are AWS namespaces and the assumption happened to hold for them.
+
+Separately, the exporter emits gauges carrying CloudWatch's own timestamps rather than monotonic counters. `rate()` and `increase()` require a series that only increases, so both returned nothing. `sum_over_time` is the correct function, and it works because repeated scrapes of the same CloudWatch datapoint share a timestamp and Prometheus stores the sample once.
+
+**Why no check caught it.** The pipeline verifies that the ConfigMap is applied and that Grafana has it. It does not, and reasonably cannot, verify that a PromQL expression returns rows. A dashboard is only wrong relative to what a human expected to see, and the failure is invisible until someone looks.
+
+**What would catch it.** A post-deployment query against the Prometheus API asserting that the key series exist and are non-empty. That is a genuine improvement and is recorded as a recommendation rather than implemented, because it was found with hours left in the project.
+
+**The general shape.** This is the third failure in this project that produced no error anywhere: the forwarder crash-looping while logging that it was healthy, the ECR token expiring silently until the next pull, and now this. Systems fail loudly in tests and quietly in production, and the quiet failures are the ones worth building detection for.
+
 # 6. Findings
 
 ## 6.1 Read permissions do not imply write permissions
@@ -380,8 +454,9 @@ Recorded honestly rather than omitted.
 
 | Area | Why | Risk |
 |---|---|---|
-| On-premises event source end to end | Hyper-V hosts not joined to the tailnet within the project window | Medium, the cloud path is proven and the syslog parser is unit-verified, but the physical hybrid link is unexercised |
-| Sustained load | No load generation performed | Low, SQS and Lambda absorb bursts by design, but the throughput ceiling is unmeasured |
-| Availability zone failure | Cannot be induced in a sandbox account | Low, managed services are multi-AZ; the k3s single node is a known and documented limitation |
-| Route 53 Resolver inbound from on-premises | Depends on the on-premises hosts above | Medium, the endpoint exists and resolves inside the VPCs |
-| Full disaster recovery from empty account | Time | Medium, partial evidence exists from R-02 and R-03 |
+| Physical on-premises hardware | The corporate server is simulated on EC2, which the assignment permits. The Hyper-V hosts were never joined to the tailnet | Low. The syslog path is proven end to end from a real host writing real authentication failures, in E-03. Only the physical location differs, and the agent is indifferent to where it runs |
+| Route 53 Resolver inbound from a physical on-premises resolver | Depends on the hosts above | Medium. The endpoint exists and resolves correctly inside the VPCs, but no external resolver has forwarded to it |
+| Sustained load | No load generation performed | Low. SQS and Lambda absorb bursts by design, but the throughput ceiling is unmeasured |
+| Availability zone failure | Cannot be induced in a sandbox account | Low. Managed services are multi-AZ; the single k3s node is a known and documented limitation |
+| Full disaster recovery from an empty account | Time | Low. R-06 destroyed and restored the entire platform layer through pipelines, which is most of the same ground. The untested remainder is the bootstrap layer and the state backend |
+| Dashboard queries returning data | No automated assertion exists | Medium. R-07 shows this failing silently. A post-deployment query against the Prometheus API would close it and is recommended |

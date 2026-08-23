@@ -1,8 +1,36 @@
 # Evidence capture guide
 
-Where each screenshot goes, what has to be visible in it, and how to get the system into the right state first.
+**Status: complete.** Twenty screenshots were captured and are embedded in the
+Design Document and the Test Plan and Results as Figures 1 to 21. The files
+themselves are in `docs/evidence/`.
 
-Save everything into `docs/evidence/` using the filename in the first column. The documents reference these names, so keeping them exact means the captions line up.
+This document is retained as the record of what each image shows and why it was
+chosen, and as the procedure to follow if the evidence has to be recaptured
+against a rebuilt environment.
+
+| Figure | File | Appears in |
+|---|---|---|
+| 1 | diagrams/network-architecture.png | Design, section 3 |
+| 2 | e01-bruteforce-test-output.png | Test, 4.1 |
+| 3 | e02-nacl-before.png | Test, 4.1 |
+| 4 | e03-nacl-after.png | Test, 4.1 |
+| 5 | e09-dynamodb-block.png | Test, 4.1 |
+| 6 | e06-quarantine-test-output.png | Test, 4.2 |
+| 7 | e04-instance-normal.png | Test, 4.2 |
+| 8, 9 | e05-instance-quarantined.png, -pt2 | Test, 4.2 |
+| 10 | e10-notification-email.png | Test, 4.2 |
+| 11, 12 | o03-onprem-test.png, -pt2 | Test, 4.3 |
+| 13 | o01-forwarder-active.png | Test, 4.3 |
+| 14 | o02-authlog.png | Test, 4.3 |
+| 15 | e07-iam-failure-logs.png | Test, 5.1 |
+| 16, 17 | o04-soar-dashboard.png, -pt2 | Design, 4.4 |
+| 18 | p06-soar-console.png | Design, 6.2 |
+| 19 | p01-workflows-list.png | Design, 6.2 |
+| 20 | p02-run-list.png | Design, 6.2 |
+| 21 | p03-approval-prompt.png | Design, 6.2 |
+
+The three pairs marked -pt2 are continuations of a screen too tall to capture
+in one frame, not alternative takes.
 
 ## Before you start
 

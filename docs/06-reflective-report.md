@@ -122,7 +122,7 @@ The response capability works and is demonstrable. A correlated brute-force patt
 
 What is not finished, stated honestly: the on-premises virtual machines were never joined to the tailnet, so the hybrid path is implemented and deployed but not exercised end to end from a physical on-premises host. The cloud side of that path is proven and the syslog parser is verified, but the physical link is untested and I have recorded it as such rather than implying otherwise.
 
-The observability node is still a single point of failure and the bootstrap race is still there. Both are documented with named fixes I did not have time to apply, though the stack on that node can now be restored by running one pipeline rather than by hand. I would rather hand over a system with three honest limitations than one where the limitations are undiscovered.
+The observability node is still a single point of failure, the NAT gateway is still single, and the bootstrap race is still there. All three are documented with named fixes I did not have time to apply, though the stack on that node can now be restored by running one pipeline rather than by hand. The corporate server is simulated on EC2 rather than being physical hardware, which the assignment permits and which I have said plainly wherever it matters. I would rather hand over a system whose limitations are written down than one where they are undiscovered.
 
 # 7. Closing
 
