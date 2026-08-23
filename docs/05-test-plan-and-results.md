@@ -182,9 +182,19 @@ That is the correct outcome and it is the more valuable half of this test. E-05 
 
 Blocking of external addresses is covered by E-01.
 
-**A defect this test exposed.** The forwarder was written to send four patterns, including `Invalid user`, but the collector only classified `Failed password` and `Failed publickey`. Invalid-user events therefore arrived, fell through to `syslog_generic`, lost their source address, and matched no playbook. The two components disagreed about what an SSH authentication failure looks like, and nothing failed loudly: events were ingested and stored, they simply never did anything.
+**Two defects this test exposed.**
 
-Fixed by adding the missing patterns to the collector, and guarded by a unit test that asserts every pattern the forwarder sends is classified by the collector, so the contract between the two cannot drift again.
+*The forwarder crashed on the first line it tried to forward.* The tail loop iterated the file with `for line in fh` and called `fh.tell()` inside it to record its offset. Python disallows that combination, because the iterator reads ahead in blocks and the position `tell()` would report is not the position after the current line. It raises `OSError: telling position disabled by next() call`.
+
+The failure mode was quiet in the worst way. The agent started, logged that it was watching the file and which endpoint it would post to, then died on the first match. systemd restarted it, and it repeated. By the time this test ran the restart counter had reached 371. Every log line said the agent was working; the service status said `activating` rather than `active`, which is the only visible difference and is easy to read past.
+
+Fixed by reading with `readline()` in a while loop, which does not disable `tell()`. The agent had no tests at all, which is why a defect this basic reached deployment. Nine tests were added that exercise the real tail loop against a real file, covering the regression itself, offset persistence across restarts, rotation handling, and partial lines.
+
+*The forwarder and the collector disagreed about what an SSH failure looks like.* The forwarder sends four patterns including `Invalid user`, but the collector only classified `Failed password` and `Failed publickey`. Invalid-user events arrived, fell through to `syslog_generic`, lost their source address, and matched no playbook. Nothing failed loudly: events were ingested and stored, they simply never did anything.
+
+Fixed by adding the missing patterns, and guarded by a test asserting that every pattern the forwarder sends is classified by the collector, so the contract cannot drift again.
+
+**What links them.** Both were failures of the gap between two components rather than of either component alone, and neither produced an error anywhere an operator would look. The forwarder is the only part of this system that runs unattended on a host nobody logs into, and it was the only part with no tests. That correlation is not a coincidence.
 
 Run with `scripts/test-soar-onprem-syslog.ps1`.
 

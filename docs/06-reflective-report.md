@@ -98,6 +98,8 @@ Two things I take from this. The gap existed for two days and I could not see it
 
 **Start the repository before the first file.** Every hour without it was an hour where mistakes were invisible.
 
+**Write tests for the component nobody watches.** The forwarder agent was the only part of the system with no unit tests, and it was also the only part that runs unattended on a host nobody logs into. It shipped with a defect that killed it on the first line it processed, and it restarted 371 times before I looked, because every log line it emitted said it was working. The parts most in need of tests are the ones whose failure is quietest, and I tested the parts that were easiest to test instead.
+
 **Design the refusal conditions before the action.** Both destructive actions ended up with explicit guards, but I added them while writing the handlers rather than deciding them first. For a system permitted to change production on its own, what it must never do is the more important half of the specification, and it deserves to be written down before the code.
 
 **Ask what happens if each component is destroyed, before finishing.** The observability gap would have been obvious the moment I asked it, and I only got there because a pipeline forced the question. "Can this be rebuilt without me" is a better test of infrastructure as code than "is it working".

@@ -127,9 +127,20 @@ def tail():
         if size > offset:
             with open(WATCH_FILE, "r", errors="replace") as fh:
                 fh.seek(offset)
-                for line in fh:
+
+                # readline() rather than iterating the file object. Python
+                # disables tell() inside a `for line in fh` loop because the
+                # iterator reads ahead in blocks, so the position it would
+                # report is not the position after the current line. Mixing the
+                # two raises OSError on the first call, which is exactly what
+                # this agent needs to do to record its offset.
+                while True:
+                    line = fh.readline()
+                    if not line:
+                        break                    # end of file for now
                     if not line.endswith("\n"):
-                        break            # partial write, pick it up next pass
+                        break                    # partial write, next pass
+
                     if any(p.search(line) for p in INTERESTING):
                         if post(line):
                             log.info("forwarded: %s", line.strip()[:120])
@@ -138,9 +149,10 @@ def tail():
                             write_offset(offset)
                             time.sleep(POLL_SECONDS)
                             break
+
                     offset = fh.tell()
-                else:
-                    write_offset(offset)
+
+                write_offset(offset)
 
         time.sleep(POLL_SECONDS)
 
