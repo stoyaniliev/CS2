@@ -270,6 +270,41 @@ jobs:
             exit 1
           fi
 
+          # Checking that every pod which exists is Running says nothing about
+          # a pod that was never created. Alertmanager failed to start for
+          # several hours behind a green pipeline for exactly that reason: its
+          # custom resource existed, the operator refused to build a StatefulSet
+          # from a broken config, and no pod appeared to be unhealthy because no
+          # pod appeared at all. Absence has to be checked explicitly.
+          echo "--- expected components present ---"
+          missing=0
+          for want in alertmanager-monitoring-alertmanager \
+                      prometheus-monitoring-prometheus \
+                      monitoring-grafana \
+                      loki-0 \
+                      alloy- \
+                      cloudwatch-exporter; do
+            if kubectl -n monitoring get pods --no-headers | grep -q "$want"; then
+              echo "  present: $want"
+            else
+              echo "::error::expected component not deployed: $want"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+          # The operator reports a config it could not apply here rather than
+          # in pod status, so the condition is read directly.
+          reconciled=$(kubectl -n monitoring get alertmanager monitoring-alertmanager \
+            -o jsonpath='{.status.conditions[?(@.type=="Reconciled")].status}' 2>/dev/null || echo Unknown)
+          echo "alertmanager reconciled: ${reconciled}"
+          if [ "$reconciled" != "True" ]; then
+            kubectl -n monitoring get alertmanager monitoring-alertmanager \
+              -o jsonpath='{.status.conditions[?(@.type=="Reconciled")].message}{"\n"}'
+            echo "::error::Alertmanager configuration was rejected. The monitoring to SOAR path is down."
+            exit 1
+          fi
+
           echo "--- dashboards imported ---"
           kubectl -n monitoring get configmap -l grafana_dashboard=1 \
             -o custom-columns=NAME:.metadata.name --no-headers
@@ -287,12 +322,26 @@ jobs:
 
       - name: Confirm the monitoring to SOAR path
         run: |
-          # REQ-NCA-P2-09. If Alertmanager cannot reach the ingest endpoint,
-          # the observability stack is not part of the SOAR system, whatever
-          # the configuration says.
+          # REQ-NCA-P2-09, checked in two parts.
+          #
+          # The curl below proves the endpoint is reachable from inside the
+          # cluster. On its own that is not enough: it bypasses Alertmanager,
+          # so it passes even when Alertmanager is not running. The receiver
+          # check afterwards closes that gap.
           ssh k3s "curl -s -o /dev/null -w 'ingest endpoint returned HTTP %{http_code}\n' \
             -X POST '${SOAR_INGEST_URL}' -H 'Content-Type: application/json' \
             -d '{\"event_type\":\"pipeline_connectivity_check\",\"severity\":\"low\",\"description\":\"observability pipeline post-deploy check\"}'"
+
+      - name: Confirm Alertmanager loaded the SOAR receiver
+        run: |
+          ssh k3s 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          kubectl -n monitoring exec sts/alertmanager-monitoring-alertmanager -c alertmanager -- \
+            wget -qO- http://127.0.0.1:9093/api/v2/status \
+            | grep -o 'soar-ingest' | head -1
+          REMOTE
+          echo "Alertmanager is running with the SOAR webhook receiver loaded" 
 
       - name: Summary
         run: |

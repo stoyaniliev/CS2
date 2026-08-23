@@ -55,7 +55,23 @@ alertmanager:
       group_wait: 10s
       group_interval: 30s
       repeat_interval: 1h
+      routes:
+        # Watchdog is a dead-man's switch that fires continuously by design, and
+        # InfoInhibitor is a suppression helper. Neither is a security event, so
+        # both are discarded rather than sent to SOAR, where they would arrive
+        # every thirty seconds and bury real alerts.
+        #
+        # This block also has to exist for a mechanical reason. The chart ships
+        # a default route referencing a receiver named 'null'. Helm replaces
+        # lists but merges maps, so overriding 'receivers' removes the chart's
+        # 'null' receiver while its route still points at it, and Alertmanager
+        # then refuses to start with "undefined receiver null used in route".
+        - receiver: 'null'
+          matchers:
+            - alertname =~ "InfoInhibitor|Watchdog"
     receivers:
+      # Must be declared even though it does nothing, for the reason above.
+      - name: 'null'
       - name: soar-ingest
         webhook_configs:
           # REQ-NCA-P2-09: monitoring is the primary event source for SOAR.
