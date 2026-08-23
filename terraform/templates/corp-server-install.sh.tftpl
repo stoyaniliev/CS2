@@ -1,0 +1,62 @@
+#!/bin/bash
+# Simulated on-premises corporate server.
+# Runs rsyslog and the SOAR forwarder agent.
+set -euxo pipefail
+exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+hostnamectl set-hostname corp-server
+
+# Retry rather than a single shot: this instance may boot before its network
+# routes are ready, which is the failure that left an earlier node unbootstrapped.
+for attempt in $(seq 1 30); do
+  if apt-get update -y; then break; fi
+  echo "apt update failed, attempt $attempt, retrying"
+  sleep 10
+done
+
+apt-get install -y rsyslog python3 prometheus-node-exporter
+
+systemctl enable --now rsyslog
+systemctl enable --now prometheus-node-exporter
+
+# Log failed authentications at a level that reaches auth.log promptly.
+sed -i 's/^#LogLevel INFO/LogLevel VERBOSE/' /etc/ssh/sshd_config || true
+systemctl restart ssh || systemctl restart sshd || true
+
+# --- SOAR forwarder ---------------------------------------------------------
+mkdir -p /opt/soar-forwarder /var/lib/soar-forwarder
+
+cat >/opt/soar-forwarder/syslog_forwarder.py <<'FORWARDER'
+${forwarder_code}
+FORWARDER
+
+chmod +x /opt/soar-forwarder/syslog_forwarder.py
+
+cat >/etc/systemd/system/soar-forwarder.service <<UNIT
+[Unit]
+Description=SOAR syslog forwarder
+After=network-online.target rsyslog.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=SOAR_INGEST_URL=${soar_ingest_url}
+Environment=WATCH_FILE=/var/log/auth.log
+Environment=STATE_FILE=/var/lib/soar-forwarder/offset
+Environment=REPORT_AS=corp-server.innovatech.internal
+ExecStart=/usr/bin/python3 /opt/soar-forwarder/syslog_forwarder.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now soar-forwarder.service
+
+sleep 5
+systemctl status soar-forwarder --no-pager || true
+
+touch /var/lib/cloud/corp-server-ready
+echo "corp-server ready, forwarding auth events to ${soar_ingest_url}" | logger -t user-data

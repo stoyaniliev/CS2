@@ -133,29 +133,14 @@ data "aws_iam_policy_document" "action_quarantine" {
     effect    = "Allow"
     actions   = ["ec2:ModifyInstanceAttribute"]
     resources = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*"]
-
-    # Enforced by IAM rather than by code - even if the handler's tag check were
-    # bypassedw the API call fails on any instance not marked quarantinable
+    # Second safety gate, enforced by IAM rather than by code: even if the
+    # handler's tag check were bypassed, the API call itself fails on any
+    # instance not explicitly marked as quarantinable.
     condition {
       test     = "StringEquals"
       variable = "aws:ResourceTag/SOARable"
       values   = ["true"]
     }
-  }
-
-  # Changing an instance's groups authorises against the target security group
-  # as well as the instance. Granting only the quarantine group means this role
-  # can move a host INTO isolation and nowhere else — it cannot restore a host,
-  # cannot attach it to a permissive group, and cannot touch any other SG in
-  # the account. Release is deliberately a human action (see
-  # scripts/restore-quarantined-host.ps1).
-  statement {
-    sid     = "AttachQuarantineGroupOnly"
-    effect  = "Allow"
-    actions = ["ec2:ModifyInstanceAttribute"]
-    resources = [
-      "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:security-group/${aws_security_group.quarantine.id}",
-    ]
   }
   statement {
     effect    = "Allow"

@@ -1,8 +1,8 @@
 # Prometheus, Alertmanager and Grafana.
 #
-# Placeholders written in double-underscore form are substituted at deploy time
-# Terraform outputs and repository secrets, so no environment-specific value is
-# committed to the repository.
+# Placeholders written in double-underscore form are substituted at deploy
+# time from Terraform outputs and repository secrets, so no environment-specific
+# value is committed to the repository.
 
 fullnameOverride: monitoring
 

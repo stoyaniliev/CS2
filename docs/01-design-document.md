@@ -72,6 +72,18 @@ The platform is built on Amazon Web Services in the `eu-central-1` (Frankfurt) r
 
 The design principle running through all four layers is **containment by construction**: wherever a security property can be guaranteed by the shape of the system rather than by a configuration setting, it is. A database with no route to the internet cannot be exposed by a misconfigured firewall rule. A rule engine with no write permissions cannot damage the environment however badly it misbehaves.
 
+## 2.1 Cloud agnosticism
+
+The assignment asks for a design that is cloud-agnostic in principle while being implemented on one platform. That is the position taken here, and it is worth being precise about where it holds and where it does not.
+
+**Portable by design.** The network topology is hub-and-spoke with segmented routing, which every major provider expresses: AWS Transit Gateway, Azure Virtual WAN or hub VNet peering, Google Network Connectivity Center. The container platform is k3s, a CNCF-conformant Kubernetes distribution, so every manifest and Helm chart runs unchanged on AKS, GKE or EKS. The observability stack is Prometheus, Loki and Grafana, none of which are provider-specific. The SOAR logic is plain Python with a declarative playbook file, and the rule engine contains no cloud API calls at all.
+
+**Provider-specific by necessity.** The response actions manipulate AWS network ACLs and security groups, because containment has to touch the actual network. Porting them means rewriting three handler files against the equivalent primitives: Azure network security groups, or Google firewall rules. The event bus, queue and function runtime are AWS services with direct equivalents elsewhere (Event Grid and Pub/Sub, Service Bus and Cloud Tasks, Azure Functions and Cloud Run Functions).
+
+**The honest summary.** The architecture ports. The infrastructure code does not, because Terraform's AWS provider is not the Azure provider whatever the language in common. Roughly the SOAR logic, the playbooks, the observability configuration and the container workloads move unchanged, and the infrastructure definitions and the three response handlers would be rewritten.
+
+Claiming more than that would be dishonest. A design that is genuinely portable across providers without modification tends to be one that uses none of them well.
+
 ```{=openxml}
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
@@ -257,6 +269,23 @@ Prometheus rules turn SOAR degradation into a SOAR event, so the system monitors
 - `SoarActionsFailing`, any action failure rate above zero for two minutes
 - `SoarDeadLetterQueueNotEmpty`, messages parked in either dead-letter queue
 
+
+### Dashboard layout
+
+The SOAR Operations dashboard is versioned JSON in `observability/dashboards/` and imported by the pipeline as a ConfigMap that the Grafana sidecar picks up. It is not clicked together in the interface, so it survives a node rebuild.
+
+Four rows, ordered by the question an operator asks first.
+
+**SOAR at a glance.** Six counters over the last hour: events ingested, playbooks matched, actions executed, actions failed, actions refused, events unmatched. Read left to right they describe the funnel from raw event to response. Failed is red and refused is amber, because they mean different things: a failure needs investigation, a refusal is a safety guard doing its job.
+
+**Response pipeline.** Event flow as four overlaid rates, ingested through matched through dispatched through executed. Dispatched and executed should track each other exactly; a gap between them is the signature of an action failing, and it is visible at a glance without reading any log. Beside it, actions broken down by type, which shows whether the system is mostly notifying or actually containing.
+
+**SOAR system health.** Failures and refusals split by action type and reason, dead-letter queue depth for both queues, Lambda duration and Lambda errors. This row answers "is the responder itself healthy", which is the requirement's actual demand and is distinct from whether the environment is healthy.
+
+**Monitored estate.** Scrape target availability across everything, cloud and on-premises. This is where the two halves of the system visibly meet: a target dropping to zero fires `TargetDown`, which the Alertmanager webhook turns into a SOAR event, which the rows above then account for.
+
+The ordering is deliberate. An operator opening this during an incident sees whether responses are firing before seeing anything else, because that is the question that determines whether they need to intervene manually.
+
 ```{=openxml}
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
@@ -283,7 +312,25 @@ Three properties make this event-driven in substance rather than in name:
 
 **Every stage is independently observable and retryable.** EventBridge retries dispatch twice with a five-minute maximum age, and undeliverable actions land in a dead-letter queue rather than disappearing.
 
-## 5.2 Event normalisation
+## 5.2 Event sources
+
+Three sources feed the pipeline, and the collector normalises all of them into one schema.
+
+| Source | What it reports | How it reaches the collector |
+|---|---|---|
+| Simulated on-premises server | Failed SSH authentication, privilege escalation attempts, break-in warnings | A forwarder agent tails `/var/log/auth.log` and posts to the private API |
+| Prometheus Alertmanager | Availability, resource and SOAR-health alerts from the cloud estate | Webhook receiver pointed at the same endpoint |
+| CloudWatch alarms | Managed service conditions | SNS to the same endpoint |
+
+The on-premises source is worth describing precisely, because it is the one the requirement names first and the one most easily faked.
+
+`corp-server` is an Ubuntu host running rsyslog, node_exporter, and a small forwarder written against the standard library only. The forwarder follows the authentication log, matches the four patterns worth acting on, and posts matching lines. It keeps a byte offset on disk so a restart does not replay the log, treats a shrinking file as rotation, and does not advance past a line it failed to deliver.
+
+Nothing about the events it produces is synthetic. When the demonstration runs failed logins against that host, sshd writes the failures itself and the agent reads what sshd wrote. The only simulated aspect is that the host is an EC2 instance rather than hardware in a server room, which the assignment permits.
+
+It is deliberately not tagged `SOARable`. Quarantining the machine that reports intrusions would silence the alarm rather than contain the intruder, and the tag is the mechanism that prevents it.
+
+## 5.3 Event normalisation
 
 Each source speaks a different format. The collector normalises all of them into one internal schema so the rule engine never needs to know where an event came from:
 
@@ -304,13 +351,13 @@ Each source speaks a different format. The collector normalises all of them into
 
 Adding a fifth source means adding one parser in the collector and changing nothing downstream. Unrecognised syslog lines are stored as `syslog_generic` rather than discarded. An event nobody has written a rule for yet is a gap in coverage, not noise.
 
-## 5.3 Ingest path
+## 5.4 Ingest path
 
 The collector sits behind a private API Gateway. Alerts arrive over HTTPS from inside the network only. The collector writes to DynamoDB **before** queueing to SQS, so if the rule engine later fails the event still exists and can be replayed.
 
 The SQS queue between collector and rule engine provides three things: burst absorption during an attack, durability if the rule engine is unavailable, and a dead-letter queue where repeatedly failing events can be inspected rather than lost.
 
-## 5.4 Serverless justification (REQ-NCA-P2-07)
+## 5.5 Serverless justification (REQ-NCA-P2-07)
 
 The requirement says serverless or containerised "where appropriate". The judgement made here:
 
@@ -320,7 +367,7 @@ The requirement says serverless or containerised "where appropriate". The judgem
 
 The functions run **outside** the VPC deliberately. They call only AWS APIs, never resources inside a subnet, so VPC attachment would add elastic network interface cold-start latency and a NAT dependency for no security gain.
 
-## 5.5 Least privilege
+## 5.6 Least privilege
 
 Each of the six functions has its own IAM role. The most important is the rule engine's, which grants DynamoDB read, SQS consume, and `events:PutEvents`, and nothing else. **It has no permission to modify any resource.** It can publish an event saying an address should be blocked; it cannot block anything. A flaw in rule evaluation therefore cannot damage the environment.
 
@@ -405,7 +452,7 @@ Terraform's Helm provider was the alternative and is more literally infrastructu
 
 ### Deploying SOAR to the container platform
 
-The core assignment asks for SOAR components deployed to the container platform through CI/CD. The response pipeline itself runs on Lambda, for the reasons in Section 5.4, so the containerised component is the SOAR console: a read-only view of the operational record, built as an image, pushed to ECR, and rolled out to k3s by pipeline.
+The core assignment asks for SOAR components deployed to the container platform through CI/CD. The response pipeline itself runs on Lambda, for the reasons in Section 5.5, so the containerised component is the SOAR console: a read-only view of the operational record, built as an image, pushed to ECR, and rolled out to k3s by pipeline.
 
 It exists because that record lives across three DynamoDB tables and CloudWatch, and during an incident nobody wants four browser tabs open to answer what happened and what was done about it. It runs unprivileged with a read-only root filesystem, drops all capabilities, and holds no write permissions, so a flaw in the web layer cannot be used to release a quarantined host or lift a block.
 

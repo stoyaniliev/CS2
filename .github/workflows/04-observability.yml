@@ -57,7 +57,13 @@ jobs:
           [ -n "$PYBIN" ] || { echo "::error::No working Python interpreter"; exit 1; }
 
           "$PYBIN" - <<'PY'
-          import glob, sys
+          import glob, json, sys
+
+          # Dashboards are JSON and Grafana rejects a malformed one silently,
+          # so they are parsed here rather than discovered missing later.
+          for d in sorted(glob.glob('observability/dashboards/*.json')):
+              json.load(open(d))
+              print(f"  parsed: {d}")
 
           # PyYAML is not guaranteed on the runner, so fall back to a
           # structural check rather than skipping validation entirely.
@@ -192,8 +198,9 @@ jobs:
 
       - name: Copy to the node
         run: |
-          ssh k3s 'rm -rf ~/obs && mkdir -p ~/obs'
-          scp /tmp/obs/* k3s:~/obs/
+          ssh k3s 'rm -rf ~/obs && mkdir -p ~/obs/dashboards'
+          scp /tmp/obs/*.yaml k3s:~/obs/
+          scp observability/dashboards/*.json k3s:~/obs/dashboards/
 
       - name: Deploy the stack
         run: |
@@ -228,6 +235,21 @@ jobs:
 
           echo "=== alert rules ==="
           kubectl apply -f ~/obs/soar-alert-rules.yaml
+
+          echo "=== dashboards ==="
+          # The Grafana sidecar watches for ConfigMaps carrying the
+          # grafana_dashboard label and imports them, so a dashboard is
+          # versioned JSON in the repository rather than something clicked
+          # together in the UI and lost when the node is rebuilt.
+          for f in ~/obs/dashboards/*.json; do
+            name="dashboard-$(basename "$f" .json)"
+            kubectl -n monitoring create configmap "$name" \
+              --from-file="$(basename "$f")=$f" \
+              --dry-run=client -o yaml | \
+              kubectl label -f - --local grafana_dashboard=1 --dry-run=client -o yaml | \
+              kubectl apply -f -
+            echo "  imported $name"
+          done
           REMOTE
 
       - name: Verify the stack is healthy
@@ -245,6 +267,10 @@ jobs:
             echo "::error::pods not running: $notready"
             exit 1
           fi
+
+          echo "--- dashboards imported ---"
+          kubectl -n monitoring get configmap -l grafana_dashboard=1 \
+            -o custom-columns=NAME:.metadata.name --no-headers
 
           echo "--- alert rules loaded ---"
           kubectl -n monitoring get prometheusrule soar-rules \
@@ -279,6 +305,7 @@ jobs:
             echo "| Alloy | pod and host log collection |"
             echo "| Grafana | dashboards |"
             echo "| cloudwatch-exporter | SOAR metrics into Prometheus |"
+            echo "| SOAR Operations dashboard | imported from versioned JSON |"
             echo ""
             echo "Tunnel to Grafana:"
             echo '```'

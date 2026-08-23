@@ -53,6 +53,8 @@ The end-to-end tests are scripted (`scripts/test-soar-bruteforce.ps1`, `scripts/
 | F-14 | Playbook integrity gate | Pipeline validation job | Malformed playbooks fail the build | **Pass** |
 | F-15 | Observability deployed by pipeline | Observability workflow | Stack applied from versioned values, all pods Running | **Pass**, 1m36s |
 | F-16 | Monitoring to SOAR path verified per deployment | Post-deploy check in the pipeline | HTTP 200 from inside the cluster | **Pass** |
+| F-17 | On-premises forwarder agent running | `systemctl is-active soar-forwarder` on corp-server | active | **Pass** |
+| F-18 | SOAR dashboard imported from versioned JSON | ConfigMap labelled `grafana_dashboard` present | Dashboard visible in Grafana | **Pass** |
 
 ## 3.1 F-01. Capability probe
 
@@ -151,13 +153,41 @@ Elapsed from first event to network change: under 25 seconds.
 | Record | Original groups stored for restoration |
 | State | Instance remains `Running`, forensics preserved |
 
-## 4.3 E-03. Idempotency
+## 4.3 E-03. On-premises syslog event source
+
+**Objective.** Prove the requirement that alerts originate from on-premises servers, with no part of the event fabricated.
+
+**Method.** Six failed SSH logins executed against `corp-server` from the bastion. Nothing submits an event: sshd writes the failures to `/var/log/auth.log` itself, and the forwarder agent reads what sshd wrote.
+
+**Chain under test.**
+
+```
+failed login -> sshd -> auth.log -> forwarder agent -> private API Gateway
+-> collector -> DynamoDB + SQS -> rule engine -> EventBridge -> block_ip -> NACL
+```
+
+**Result.**
+
+| Stage | Evidence |
+|---|---|
+| Origin | Real `Failed password` lines in auth.log on corp-server |
+| Forward | Agent journal shows each line posted |
+| Ingest | Events stored with source `syslog`, host `corp-server.innovatech.internal` |
+| Classify | Parsed as `ssh_auth_failure`, severity high, source address extracted |
+| Correlate | Threshold met, PB-001 matched |
+| Respond | DENY entry written to the platform network ACL |
+
+**Significance.** The two tests above submit a payload to the collector, which proves the pipeline but not the source. This one closes that gap. The only simulated aspect is that the corporate server is an EC2 instance rather than hardware in a server room, which the assignment permits.
+
+Run with `scripts/test-soar-onprem-syslog.ps1`.
+
+## 4.4 E-04. Idempotency
 
 **Method.** Re-run E-01 against an address already blocked.
 
 **Result. Pass.** The action returned `already_blocked` with the existing rule number and emitted `ActionsSkipped` with reason `already_blocked`. No duplicate ACL entry was created. Repeated events from a persistent attacker therefore do not exhaust the ACL rule quota.
 
-## 4.4 E-04. Safety guard, protected address range
+## 4.5 E-05. Safety guard, protected address range
 
 **Method.** Submit a brute-force pattern with an RFC1918 source address.
 
@@ -165,7 +195,7 @@ Elapsed from first event to network change: under 25 seconds.
 
 **Why this test matters.** An automated blocking system that can be induced to block internal addresses can lock its own operators out of the environment. Verifying the refusal path is as important as verifying the action path.
 
-## 4.5 E-05. Block expiry
+## 4.6 E-06. Block expiry
 
 **Method.** Observe an active block past its 60-minute duration.
 
@@ -227,6 +257,27 @@ Elapsed from first event to network change: under 25 seconds.
 
 **Result. Pass.** HTTP 400 returned, `EventsRejected` emitted with reason `malformed_json`, nothing written to the event store. The partial batch response configuration means a malformed message in a batch does not cause valid messages alongside it to be redelivered.
 
+## 5.5 R-05. Planned instance replacement and automated recovery
+
+**The only failure test here that was designed rather than encountered.** The four above were real incidents. This one was executed deliberately to answer a question none of them could: can the platform be destroyed and restored without a person rebuilding it by hand?
+
+**Method.** A Terraform change forced replacement of both the hybrid gateway and the k3s server. The plan was allowed through the pipeline's approval gate, both instances were destroyed and rebuilt, and recovery was performed entirely by re-running pipelines.
+
+**Procedure.**
+
+1. Confirm the plan replaces `aws_instance.hybrid_gw` and `aws_instance.k3s_server`
+2. Approve the deployment in the production environment
+3. Wait for both instances to reach Running and their bootstraps to complete
+4. Run the Observability workflow to restore Prometheus, Alertmanager, Loki, Alloy, Grafana and the dashboard
+5. Run the SOAR Console workflow to restore the containerised console
+6. Run `scripts/test-soar-bruteforce.ps1` to confirm the response path still works
+
+**What is actually being tested.** Not whether AWS can create an instance. Whether the configuration of those instances lives in code: k3s and its bootstrap, the ECR credential timer, the Tailscale subnet router, the observability stack, the dashboard, and the container workload.
+
+**Expected behaviour.** The SOAR response pipeline is unaffected throughout, because it runs on Lambda and has no dependency on either instance. Monitoring and the console are unavailable between destruction and the pipeline runs completing. Nothing requires manual configuration at any point.
+
+**Note on how this test came about.** The gate stopped an earlier accidental attempt at the same change. Being forced to review the plan prompted the question of what would break, which exposed that the observability stack was not reproducible at the time. The control found a design flaw before it found a destructive change.
+
 # 6. Findings
 
 ## 6.1 Read permissions do not imply write permissions
@@ -259,14 +310,14 @@ The `ActionsSkipped` metric with a reason dimension exists so that refusals are 
 
 | Requirement | Verified by |
 |---|---|
-| P2-01 Design-for-failure | R-01, R-02, R-03 |
+| P2-01 Design-for-failure | R-01, R-02, R-03, R-05 |
 | P2-02 Network segmentation | F-04, F-05 |
 | P2-03 Private resource access | F-05, F-06, F-07 |
 | P2-04 Internal DNS | F-04 (zone associations), design document |
 | P2-05 Observability stack | F-09, F-10, F-15 |
-| P2-06 Event-driven SOAR | E-01, E-02, R-01 |
+| P2-06 Event-driven SOAR | E-01, E-02, E-03, F-17, R-01 |
 | P2-07 Serverless components | F-09, E-01, E-02 |
-| P2-08 SOAR self-monitoring | F-11 |
+| P2-08 SOAR self-monitoring | F-11, F-18 |
 | P2-09 Observability in SOAR | F-07, F-16 (verified on every deployment) |
 | P2-10 Infrastructure as Code | F-02, F-03, F-15, R-02, R-03 |
 | P2-11 CI/CD | F-13, F-14, F-15, F-16, and the four pipeline definitions |

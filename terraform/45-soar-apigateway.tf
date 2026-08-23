@@ -153,10 +153,6 @@ resource "aws_api_gateway_method_settings" "prod" {
   stage_name  = aws_api_gateway_stage.prod.stage_name
   method_path = "*/*"
 
-  # The account-level CloudWatch role must exist before a stage can enable
-  # execution logging. No attribute links them, so the dependency is declared.
-  depends_on = [aws_api_gateway_account.main]
-
   settings {
     metrics_enabled = true
     logging_level   = "INFO"
@@ -170,35 +166,6 @@ output "soar_ingest_url" {
 
 output "soar_event_bus" {
   value = aws_cloudwatch_event_bus.soar.name
-}
-
-# ---------------------------------------------------------------------------
-# API Gateway execution logging.
-#
-# The CloudWatch role is an account-level setting, not a per-API one, so it is
-# declared once here. Note this is shared account state: it affects every API
-# Gateway in the account, which is worth flagging in a shared environment.
-# ---------------------------------------------------------------------------
-
-resource "aws_iam_role" "apigw_cloudwatch" {
-  name = "${var.project}-apigw-cloudwatch"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "apigateway.amazonaws.com" }
-      Action    = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "apigw_cloudwatch" {
-  role       = aws_iam_role.apigw_cloudwatch.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
-}
-
-resource "aws_api_gateway_account" "main" {
-  cloudwatch_role_arn = aws_iam_role.apigw_cloudwatch.arn
 }
 
 # ---------------------------------------------------------------------------

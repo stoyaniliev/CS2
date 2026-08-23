@@ -175,6 +175,51 @@ The least-privilege claim is the strongest security argument in the project, and
 
 ---
 
+## Evidence for the on-premises source and the dashboard
+
+### O-01, the forwarder agent running
+
+**File:** `evidence/o01-forwarder-active.png`
+**Goes in:** Test Plan and Results, Section 4.3
+**How:** SSH to corp-server, `systemctl status soar-forwarder`
+**Must show:** active (running), and a few recent log lines showing forwarded events
+
+### O-02, real auth failures on the host
+
+**File:** `evidence/o02-authlog.png`
+**Goes in:** Test Plan and Results, Section 4.3
+**How:** On corp-server, `sudo tail -20 /var/log/auth.log` after running the test
+**Must show:** `Failed password` lines with timestamps and source addresses
+
+This is the shot that proves nothing was fabricated. The events in the pipeline correspond line for line to what sshd wrote here.
+
+### O-03, on-premises test output
+
+**File:** `evidence/o03-onprem-test.png`
+**Goes in:** Test Plan and Results, Section 4.3
+**How:** Full terminal output of `test-soar-onprem-syslog.ps1`
+**Must show:** the forwarder journal, the syslog-sourced events table, the NACL before and after, and the PASS verdict
+
+### O-04, SOAR Operations dashboard
+
+**File:** `evidence/o04-soar-dashboard.png`
+**Goes in:** Design Document, Section 4.4, and it is the primary evidence for REQ-NCA-P2-08
+**How:** Tunnel to Grafana on port 30030, open the SOAR Operations dashboard
+**Must show:** the six headline counters with non-zero values, and at least the response pipeline row
+
+Run a SOAR test first and wait two minutes, so cloudwatch-exporter has scraped the metrics and the panels are populated. An empty dashboard proves it exists but not that it works.
+
+### O-05, the funnel with real data
+
+**File:** `evidence/o05-dashboard-pipeline-row.png`
+**Goes in:** SOAR Design, Section 3.4
+**How:** The response pipeline row of the dashboard, after a test run
+**Must show:** ingested, matched, dispatched and executed as overlaid lines
+
+Dispatched and executed tracking each other exactly is the visual proof that responses are completing rather than merely being ordered.
+
+---
+
 ## Evidence for the CI/CD sections
 
 ### P-01, all four workflows
