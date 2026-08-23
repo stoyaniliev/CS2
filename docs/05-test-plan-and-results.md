@@ -137,19 +137,19 @@ Elapsed from first event to network change: under 25 seconds.
 
 ![](evidence/e01-bruteforce-test-output.png){width=5.4in}
 
-*Figure 2: the scripted test. Five events submitted, the threshold met on the fifth, and a network ACL entry created. The verdict asserts on the presence of a DENY rule that did not exist before the run.*
+*Figure 19: the scripted test. Five events submitted, the threshold met on the fifth, and a network ACL entry created. The verdict asserts on the presence of a DENY rule that did not exist before the run.*
 
 ![](evidence/e02-nacl-before.png){width=6.1in}
 
-*Figure 3: the platform network ACL before the test. Rule 100 permits all traffic; the asterisk entry is the implicit default deny.*
+*Figure 20: the platform network ACL before the test. Rule 100 permits all traffic; the asterisk entry is the implicit default deny.*
 
 ![](evidence/e03-nacl-after.png){width=6.1in}
 
-*Figure 4: the same screen after the test. Rule 101 denies 203.0.113.66/32 and was created by the block_ip function. Nothing was clicked in the console between Figures 3 and 4.*
+*Figure 21: the same screen after the test. Rule 101 denies 203.0.113.66/32 and was created by the block_ip function. Nothing was clicked in the console between Figures 20 and 21.*
 
 ![](evidence/e09-dynamodb-block.png){width=6.1in}
 
-*Figure 5: the corresponding record in DynamoDB, carrying the playbook that decided it, the rule number allocated, the reason, and the expiry the scheduled function will act on.*
+*Figure 22: the corresponding record in DynamoDB, carrying the playbook that decided it, the rule number allocated, the reason, and the expiry the scheduled function will act on.*
 
 
 **Significance.** This is the demonstration the previous submission lacked. The system detected a pattern that no single event revealed, decided on a response from a declarative rule, and changed the network. Nothing was triggered manually and no operator was involved.
@@ -173,21 +173,21 @@ Elapsed from first event to network change: under 25 seconds.
 
 ![](evidence/e06-quarantine-test-output.png){width=4.6in}
 
-*Figure 6: the quarantine test. The security group changes from the normal group to the isolation group, and the record is written with the originals preserved for restoration.*
+*Figure 23: the quarantine test. The security group changes from the normal group to the isolation group, and the record is written with the originals preserved for restoration.*
 
 ![](evidence/e04-instance-normal.png){width=6.1in}
 
-*Figure 7: the demo workstation before isolation, carrying the normal security group with two inbound rules and one outbound rule.*
+*Figure 24: the demo workstation before isolation, carrying the normal security group with two inbound rules and one outbound rule.*
 
 ![](evidence/e05-instance-quarantined.png){width=6.1in}
 
 ![](evidence/e05-instance-quarantined-pt2.png){width=6.1in}
 
-*Figures 8 and 9: the same instance after isolation. The security group is now the quarantine group, both rule tables read "No rules to display", and the instance state is still Running. The empty tables are the isolation: security groups are default-deny, so a group with no rules permits nothing in either direction.*
+*Figures 25 and 26: the same instance after isolation. The security group is now the quarantine group, both rule tables read "No rules to display", and the instance state is still Running. The empty tables are the isolation: security groups are default-deny, so a group with no rules permits nothing in either direction.*
 
 ![](evidence/e10-notification-email.png){width=6.1in}
 
-*Figure 10: the notification produced by the same playbook. It states what was detected and that the response has already been executed, rather than asking the reader to act.*
+*Figure 27: the notification produced by the same playbook. It states what was detected and that the response has already been executed, rather than asking the reader to act.*
 
 
 ## 4.3 E-03. On-premises syslog event source
@@ -238,15 +238,15 @@ Run with `scripts/test-soar-onprem-syslog.ps1`.
 
 ![](evidence/o03-onprem-test-pt2.png){width=6.1in}
 
-*Figures 11 and 12: the on-premises test. The three panels in the middle show the same six events at three points in the chain: what sshd wrote, what the agent forwarded, and what reached the event store. The timestamps line up, which is what makes this evidence rather than assertion. The rule engine then declines to act, because the source address is internal.*
+*Figures 28 and 29: the on-premises test. The three panels in the middle show the same six events at three points in the chain: what sshd wrote, what the agent forwarded, and what reached the event store. The timestamps line up, which is what makes this evidence rather than assertion. The rule engine then declines to act, because the source address is internal.*
 
 ![](evidence/o01-forwarder-active.png){width=6.1in}
 
-*Figure 13: the forwarder agent on corp-server, active and logging each line it forwards.*
+*Figure 30: the forwarder agent on corp-server, active and logging each line it forwards.*
 
 ![](evidence/o02-authlog.png){width=6.1in}
 
-*Figure 14: the raw authentication log on the corporate server. These lines were written by sshd in response to real connection attempts. The agent reads exactly this; nothing in the pipeline is fabricated.*
+*Figure 31: the raw authentication log on the corporate server. These lines were written by sshd in response to real connection attempts. The agent reads exactly this; nothing in the pipeline is fabricated.*
 
 
 ## 4.4 E-04. Idempotency
@@ -298,7 +298,7 @@ Run with `scripts/test-soar-onprem-syslog.ps1`.
 
 ![](evidence/e07-iam-failure-logs.png){width=6.1in}
 
-*Figure 15: the authorisation failure. The message names the security group ARN rather than the instance, which is what revealed that ModifyInstanceAttribute authorises against both. The ActionsFailed metric is emitted in the same log stream, so the failure was visible on the dashboard rather than silent.*
+*Figure 32: the authorisation failure. The message names the security group ARN rather than the instance, which is what revealed that ModifyInstanceAttribute authorises against both. The ActionsFailed metric is emitted in the same log stream, so the failure was visible on the dashboard rather than silent.*
 
 
 ## 5.2 R-02. Platform node loss and rebuild

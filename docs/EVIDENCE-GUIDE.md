@@ -10,24 +10,38 @@ against a rebuilt environment.
 
 | Figure | File | Appears in |
 |---|---|---|
-| 1 | diagrams/network-architecture.png | Design, section 3 |
-| 2 | e01-bruteforce-test-output.png | Test, 4.1 |
-| 3 | e02-nacl-before.png | Test, 4.1 |
-| 4 | e03-nacl-after.png | Test, 4.1 |
-| 5 | e09-dynamodb-block.png | Test, 4.1 |
-| 6 | e06-quarantine-test-output.png | Test, 4.2 |
-| 7 | e04-instance-normal.png | Test, 4.2 |
-| 8, 9 | e05-instance-quarantined.png, -pt2 | Test, 4.2 |
-| 10 | e10-notification-email.png | Test, 4.2 |
-| 11, 12 | o03-onprem-test.png, -pt2 | Test, 4.3 |
-| 13 | o01-forwarder-active.png | Test, 4.3 |
-| 14 | o02-authlog.png | Test, 4.3 |
-| 15 | e07-iam-failure-logs.png | Test, 5.1 |
-| 16, 17 | o04-soar-dashboard.png, -pt2 | Design, 4.4 |
-| 18 | p06-soar-console.png | Design, 6.2 |
-| 19 | p01-workflows-list.png | Design, 6.2 |
-| 20 | p02-run-list.png | Design, 6.2 |
-| 21 | p03-approval-prompt.png | Design, 6.2 |
+| 1 | network-architecture.png | Design, section 3 |
+| 2 | n01-tgw-associations.png | Design, section 3.3 |
+| 3 | n02-tgw-routes.png | Design, section 3.3 |
+| 4 | n03-data-spoke-routes.png | Design, section 3.4 |
+| 5 | n04-private-api.png | Design, section 3.4 |
+| 6 | n05-private-dns.png | Design, section 3.6 |
+| 7 | n08-monitoring-pods.png | Design, section 4.2 |
+| 8 | n09-observability-recovery.png | Design, section 4.2 |
+| 9 | o04-soar-dashboard.png | Design, section 4.4 |
+| 10 | o04-soar-dashboard-pt2.png | Design, section 4.4 |
+| 11 | soar-pipeline.png | Design, section 5.1 |
+| 12 | n06-lambda-functions.png | Design, section 5.5 |
+| 13 | n07-rule-engine-policy.png | Design, section 5.6 |
+| 14 | n07-rule-engine-policy-pt2.png | Design, section 5.6 |
+| 15 | p01-workflows-list.png | Design, section 6.2 |
+| 16 | p02-run-list.png | Design, section 6.2 |
+| 17 | p03-approval-prompt.png | Design, section 6.2 |
+| 18 | p06-soar-console.png | Design, section 6.2 |
+| 19 | e01-bruteforce-test-output.png | Test, section 4.1 |
+| 20 | e02-nacl-before.png | Test, section 4.1 |
+| 21 | e03-nacl-after.png | Test, section 4.1 |
+| 22 | e09-dynamodb-block.png | Test, section 4.1 |
+| 23 | e06-quarantine-test-output.png | Test, section 4.2 |
+| 24 | e04-instance-normal.png | Test, section 4.2 |
+| 25 | e05-instance-quarantined.png | Test, section 4.2 |
+| 26 | e05-instance-quarantined-pt2.png | Test, section 4.2 |
+| 27 | e10-notification-email.png | Test, section 4.2 |
+| 28 | o03-onprem-test.png | Test, section 4.3 |
+| 29 | o03-onprem-test-pt2.png | Test, section 4.3 |
+| 30 | o01-forwarder-active.png | Test, section 4.3 |
+| 31 | o02-authlog.png | Test, section 4.3 |
+| 32 | e07-iam-failure-logs.png | Test, section 5.1 |
 
 The three pairs marked -pt2 are continuations of a screen too tall to capture
 in one frame, not alternative takes.

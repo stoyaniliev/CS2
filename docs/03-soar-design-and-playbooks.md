@@ -17,9 +17,9 @@ Before it existed, a failed-login burst against a corporate server produced a lo
 
 It does three things in sequence:
 
-1. **Orchestration.** collects security events from every source into one normalised stream
-2. **Automation.** evaluates each event against declarative playbooks
-3. **Response.** executes containment actions that change the state of the environment
+1. **Orchestration.** Collects security events from every source into one normalised stream
+2. **Automation.** Evaluates each event against declarative playbooks
+3. **Response.** Executes containment actions that change the state of the environment
 
 This document explains the logic, documents each playbook, and shows how to add new ones. The architecture and its justification are in the design document; this one is operational.
 
@@ -165,7 +165,7 @@ For each event, every enabled playbook is checked in order. Matching is layered 
 1. **`event_type`.** must be in the playbook's list
 2. **`severity`.** must be in the playbook's list
 3. **Conditions.** `source_ip_is_external`, `requires_target_instance`
-4. **Threshold.** the correlation query, only reached if everything above passed
+4. **Threshold.** The correlation query, only reached if everything above passed
 
 An event may match several playbooks; all of their actions are dispatched. Every non-match is logged with its reason, so a playbook that unexpectedly fails to fire during a demonstration can be explained in seconds rather than debugged.
 

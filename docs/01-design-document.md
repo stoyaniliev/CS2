@@ -136,6 +136,15 @@ resource "aws_ec2_transit_gateway_route" "platform_to_data" {
 
 An assessor or auditor can point at that resource and say "this is the only permitted east-west path, and here is the commit that introduced it."
 
+![](evidence/n01-tgw-associations.png){width=6.1in}
+
+*Figure 2: both spoke attachments bound to the spoke route table. Note that default association and default propagation are both No, so nothing is attached by accident.*
+
+![](evidence/n02-tgw-routes.png){width=6.1in}
+
+*Figure 3: the routes that table contains. A default to the hub, one entry for the on-premises range, and a single exception permitting the platform spoke to reach the data spoke. There is no general path between spokes because none was created.*
+
+
 ## 3.4 Private access to managed services (REQ-NCA-P2-03)
 
 The data spoke has **no default route at all**. It is not that outbound internet access is filtered; it is that no route to a gateway exists. This is the structural guarantee referred to in Section 2: a service placed in this spoke cannot reach or be reached from the internet regardless of how its security groups are later configured.
@@ -151,6 +160,15 @@ Managed services are reached through VPC endpoints:
 Gateway endpoints cost nothing and inject prefix-list routes directly into the route table, so traffic to S3 and DynamoDB leaves over the AWS backbone and never touches the NAT gateway.
 
 The SOAR ingest API is a **private** REST API. It has no public DNS name, and its resource policy denies any request whose `aws:SourceVpce` is not one of our two endpoints. A leaked URL is useless from outside the network.
+
+![](evidence/n03-data-spoke-routes.png){width=6.1in}
+
+*Figure 4: the data spoke route table. Four routes: the S3 prefix list, two Transit Gateway entries, and the VPC local route. There is no 0.0.0.0/0 entry. The absence is the security property, and it cannot be undone by editing a security group.*
+
+![](evidence/n04-private-api.png){width=5.0in}
+
+*Figure 5: the ingest API. Endpoint type Private, with the two VPC endpoint identifiers that its resource policy permits. A request arriving by any other path is denied before it reaches the collector.*
+
 
 **Design note.** Two interface endpoints are used for `execute-api` rather than one. An interface endpoint's private DNS only resolves inside the VPC that hosts it, so a single hub endpoint would leave Alertmanager in the platform spoke resolving the ingest URL to a public address, following the default route out through NAT, and being rejected by the resource policy. The alternative. a customer-managed private hosted zone for `execute-api.eu-central-1.amazonaws.com` associated with every spoke and aliased to the hub endpoint. Scales better beyond three or four spokes and is the recommended production pattern. At this size the second endpoint is simpler to reason about and costs roughly €7 per month.
 
@@ -185,6 +203,11 @@ Current record:
 | Name | Type | Target |
 |---|---|---|
 | `metrics.innovatech.internal` | CNAME | Observability S3 bucket regional endpoint |
+
+![](evidence/n05-private-dns.png){width=6.1in}
+
+*Figure 6: the private hosted zone. Marked Private, so it has no public delegation, and holding the records that let cloud and on-premises hosts reach services by name rather than by address.*
+
 
 The inbound endpoint is behind a feature flag (`enable_resolver_inbound`) because it costs roughly €0.25/hour for its two interfaces. VPC-internal name resolution continues to work when it is disabled; only the on-premises path is affected.
 
@@ -232,6 +255,15 @@ The stack runs on k3s in the platform spoke and is deployed by pipeline from Hel
 | Grafana Alloy | Log collection from pods and host syslog |
 | Grafana | Dashboards; data sources are Prometheus, Loki and CloudWatch |
 | cloudwatch-exporter | Pulls SOAR and Lambda metrics into Prometheus |
+
+![](evidence/n08-monitoring-pods.png){width=6.1in}
+
+*Figure 7: the stack running on k3s. Alertmanager shows a much shorter age than the rest because it was restarted after the configuration defect described in Section 5.8 of the test results was corrected.*
+
+![](evidence/n09-observability-recovery.png){width=6.1in}
+
+*Figure 8: the pipeline that deploys it. Every component is applied from versioned Helm values, so the stack is reproducible without anyone running a script by hand.*
+
 
 k3s was used rather than EKS because the account's service control policy denies `eks:*`. k3s is a CNCF-conformant Kubernetes distribution, so the manifests and Helm charts are unchanged from what EKS would accept. The workload is portable even though the control plane is not managed.
 
@@ -292,7 +324,7 @@ The ordering is deliberate. An operator opening this during an incident sees whe
 
 ![](evidence/o04-soar-dashboard-pt2.png){width=6.1in}
 
-*Figures 16 and 17: the SOAR Operations dashboard with real data. The non-zero failure and refusal counters are not defects in the capture. Three failures are the authorisation regression described in the test results, and two refusals are the idempotency guard declining to re-block an address already blocked. Both are recorded here deliberately: a dashboard that has only ever shown zeros has not been shown to work. The scrape target panel at the bottom includes the on-premises server, so the machine that reports intrusions is itself monitored.*
+*Figures 9 and 10: the SOAR Operations dashboard with real data. The non-zero failure and refusal counters are not defects in the capture. Three failures are the authorisation regression described in the test results, and two refusals are the idempotency guard declining to re-block an address already blocked. Both are recorded here deliberately: a dashboard that has only ever shown zeros has not been shown to work. The scrape target panel at the bottom includes the on-premises server, so the machine that reports intrusions is itself monitored.*
 
 
 The counters for failures and refusals are placed alongside the success counters rather than hidden on a separate page, because a dashboard that only shows good news is not a monitoring tool. During this project the failure counter is what made a reverted IAM permission visible, and the refusal counter is what distinguishes a safety guard declining to act from the system doing nothing at all. Both are expected to be non-zero at times, and an operator who has never seen either move does not know what they look like.
@@ -306,6 +338,8 @@ The counters for failures and refusals are placed alongside the success counters
 ## 5.1 Event-driven architecture (REQ-NCA-P2-06)
 
 ![](diagrams/soar-pipeline.png)
+
+*Figure 11: the SOAR event pipeline. Three sources normalise into one event schema; the rule engine decides and publishes; EventBridge routes to the actions. The engine holds no permission to change anything, which is why a fault in rule evaluation cannot damage the environment.*
 
 | Stage | Component | What happens |
 |---|---|---|
@@ -380,9 +414,21 @@ The requirement says serverless or containerised "where appropriate". The judgem
 
 The functions run **outside** the VPC deliberately. They call only AWS APIs, never resources inside a subnet, so VPC attachment would add elastic network interface cold-start latency and a NAT dependency for no security gain.
 
+![](evidence/n06-lambda-functions.png){width=6.1in}
+
+*Figure 12: the six functions, all deployed by Terraform in the same apply. Zip packaging rather than container images: the handlers use only the standard library and boto3, which the runtime already provides, so an image would add roughly a hundredfold to the artefact size and a registry round trip for identical behaviour. The console is containerised because that one genuinely needs it.*
+
+
 ## 5.6 Least privilege
 
 Each of the six functions has its own IAM role. The most important is the rule engine's, which grants DynamoDB read, SQS consume, and `events:PutEvents`, and nothing else. **It has no permission to modify any resource.** It can publish an event saying an address should be blocked; it cannot block anything. A flaw in rule evaluation therefore cannot damage the environment.
+
+![](evidence/n07-rule-engine-policy.png){width=6.1in}
+
+![](evidence/n07-rule-engine-policy-pt2.png){width=6.1in}
+
+*Figures 13 and 14: the rule engine's complete inline policy, from the first statement to the closing brace. Three statements: read two DynamoDB paths, consume one queue, publish to one event bus. No statement grants write access to anything. This is the strongest security property in the system, and it is verifiable by reading rather than by trusting the description above.*
+
 
 The quarantine action illustrates defence in depth. The handler refuses to act on an instance without the tag `SOARable=true`, and refuses outright on anything tagged `Role=k3s-server` or `Role=hybrid-gateway` so the system cannot isolate itself. Independently, its IAM policy carries a condition on `aws:ResourceTag/SOARable`. If the code check were bypassed, the API call would still fail.
 
@@ -429,7 +475,7 @@ The repository is organised so that each concern is separately reviewable:
 
 ![](evidence/p01-workflows-list.png){width=2.4in}
 
-*Figure 19: the four pipelines. Between them they cover every deployable part of the system.*
+*Figure 15: the four pipelines. Between them they cover every deployable part of the system.*
 
 
 Between them these cover every deployable part of the system. The only step that remains manual is approving a plan that would destroy a resource, and that is manual deliberately.
@@ -454,11 +500,11 @@ In practice the changes made most often, a new playbook, an updated handler, an 
 
 ![](evidence/p02-run-list.png){width=6.1in}
 
-*Figure 20: the grading in one frame. From a single commit, SOAR CI and SOAR Console deployed on their own, while Infrastructure stopped and waited. The difference is not the pipeline; it is what the plan contained.*
+*Figure 16: the grading in one frame. From a single commit, SOAR CI and SOAR Console deployed on their own, while Infrastructure stopped and waited. The difference is not the pipeline; it is what the plan contained.*
 
 ![](evidence/p03-approval-prompt.png){width=5.6in}
 
-*Figure 21: why that run stopped. The plan replaces two EC2 instances, so it routed to an environment requiring review rather than applying unattended. The reviewer sees the plan summary before deciding.*
+*Figure 17: why that run stopped. The plan replaces two EC2 instances, so it routed to an environment requiring review rather than applying unattended. The reviewer sees the plan summary before deciding.*
 
 
 The console pipeline has no gate at all. A container rollout is reversible in one command, the deployment sets `maxUnavailable: 0` so there is no gap in service, and the image is smoke tested on the runner before it is pushed.
