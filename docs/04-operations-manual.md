@@ -318,7 +318,37 @@ aws ec2 describe-network-acls --network-acl-ids acl-068c30bcdb9226b04 \
 
 If the list is long, the expiry function has stopped. Check its logs, then reset with `scripts/clear-soar-blocks.ps1`.
 
-## 7.5 Terraform state is locked
+## 7.5 A pod is stuck in ImagePullBackOff
+
+The ECR pull secret has expired. Registry authentication uses a password, and the ECR token behind that password lives twelve hours.
+
+Check the timer first:
+
+```
+systemctl list-timers ecr-secret.timer --no-pager
+```
+
+If it is not listed, the unit was never installed on this node. Run
+`soar/console/ecr/setup-ecr-auth.sh` on the node, which installs it.
+
+If it is listed but the last run failed:
+
+```
+sudo journalctl -u ecr-secret.service --no-pager | tail -20
+```
+
+Force a refresh and restart the deployment:
+
+```
+sudo systemctl start ecr-secret.service
+sudo kubectl -n soar rollout restart deployment/soar-console
+```
+
+Running pods are unaffected by an expired token, because their images are
+already on disk. Only a pod that needs to pull fails, which is why this
+surfaces during a rollout rather than at the moment of expiry.
+
+## 7.6 Terraform state is locked
 
 Usually a previous run that was interrupted.
 
@@ -333,7 +363,7 @@ terraform state push errored.tfstate
 terraform state list
 ```
 
-## 7.6 Grafana shows no SOAR metrics
+## 7.7 Grafana shows no SOAR metrics
 
 The metrics come from cloudwatch-exporter, which reads CloudWatch, which is populated by the Lambdas writing embedded metric format log lines. Check in that order.
 

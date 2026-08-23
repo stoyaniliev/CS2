@@ -257,7 +257,25 @@ Run with `scripts/test-soar-onprem-syslog.ps1`.
 
 **Result. Pass.** HTTP 400 returned, `EventsRejected` emitted with reason `malformed_json`, nothing written to the event store. The partial batch response configuration means a malformed message in a batch does not cause valid messages alongside it to be redelivered.
 
-## 5.5 R-05. Planned instance replacement and automated recovery
+## 5.5 R-05. Registry credential expiry
+
+**Not a designed test.** A deployment that had worked correctly failed roughly fifteen hours later, during an unrelated rollout.
+
+**Symptom.** A new pod stuck in `ImagePullBackOff` while two older pods of the same deployment kept running normally.
+
+**Root cause.** Container registries authenticate with HTTP Basic auth, a username and a password. There is no place in the registry protocol for an AWS signature, so holding `ecr:BatchGetImage` on the node role does not by itself let containerd pull. ECR instead exchanges an IAM identity for a temporary password through `ecr:GetAuthorizationToken`, valid for twelve hours, which is stored in a Kubernetes secret and handed to containerd by the kubelet.
+
+The secret had been created once, by hand, during the initial deployment. Fifteen hours later the token inside it had expired. The kubelet presented it, ECR refused it, and the pull failed.
+
+**Why the running pods were unaffected.** Their images were already on disk. Only a pod that needs to pull is affected, which is why the failure appeared during a rollout rather than at the moment of expiry. A credential problem that stays invisible until the next deployment is worse than one that fails immediately, because the deployment that surfaces it is not the deployment that caused it.
+
+**Fix.** A systemd timer on the node mints a fresh token and overwrites the secret every six hours, against a twelve-hour lifetime, so a single missed run still leaves a valid credential. `Persistent=true` means a run missed while the node was off fires at next boot. The unit is installed by the k3s bootstrap, so a rebuilt node has it from the start.
+
+**Note on the platform choice.** EKS would not need this: AWS ships an ECR credential provider inside the EKS kubelet that performs the token exchange on every pull. k3s does not include it. This is one of the few concrete costs of the k3s decision recorded in Section 8.1 of the design document, and it is worth stating plainly rather than presenting k3s as equivalent in every respect.
+
+**Generalisation.** A credential whose lifetime is shorter than the system's uptime needs renewal machinery, not a setup step. The same reasoning already applied to the SSO session used by the pipeline runner, which expired twice during this project for the same underlying reason.
+
+## 5.6 R-06. Planned instance replacement and automated recovery
 
 **The only failure test here that was designed rather than encountered.** The four above were real incidents. This one was executed deliberately to answer a question none of them could: can the platform be destroyed and restored without a person rebuilding it by hand?
 
