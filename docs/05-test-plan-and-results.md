@@ -19,7 +19,7 @@ Tests fall into three groups:
 - **End-to-end.** Does an event travel the whole path and change the environment?
 - **Resilience.** What happens when something breaks?
 
-The end-to-end tests are scripted (`scripts/test-soar-bruteforce.ps1`, `scripts/test-soar-quarantine.ps1`) so they can be re-run on demand rather than reproduced by hand. Each prints the relevant system state before and after, and states a pass or fail verdict against a concrete criterion.
+The end-to-end tests are scripted (`test-soar-bruteforce.ps1`, `test-soar-quarantine.ps1`, `test-soar-onprem-syslog.ps1` under `scripts/`) so they can be re-run on demand rather than reproduced by hand. Two operational helpers sit alongside them, `restore-quarantined-host.ps1` and `clear-soar-blocks.ps1`, which return the environment to a known state between runs. Each prints the relevant system state before and after, and states a pass or fail verdict against a concrete criterion.
 
 # 2. Environment
 
@@ -49,7 +49,7 @@ The end-to-end tests are scripted (`scripts/test-soar-bruteforce.ps1`, `scripts/
 | F-10 | Loki writes to S3 | List the bucket after log ingestion | Chunks and index objects present | **Pass**, see 3.3 |
 | F-11 | SOAR metrics reach Prometheus | Scrape cloudwatch-exporter | `innovatech_soar` series present | **Pass** |
 | F-12 | Event stored before queueing | Inspect DynamoDB after submission | Event present | **Pass** |
-| F-13 | SOAR unit suite | `python3 -m unittest discover` | All tests pass | **Pass**, 50 tests, one defect found |
+| F-13 | SOAR unit suite | `python3 -m unittest discover` | All tests pass | **Pass**, 62 tests, three defects found |
 | F-14 | Playbook integrity gate | Pipeline validation job | Malformed playbooks fail the build | **Pass** |
 | F-15 | Observability deployed by pipeline | Observability workflow | Stack applied from versioned values, all pods Running | **Pass**, 1m36s |
 | F-16 | Monitoring to SOAR path verified per deployment | Post-deploy check in the pipeline | HTTP 200 from inside the cluster | **Pass** |
@@ -73,9 +73,9 @@ Findings that changed the design:
 
 **The probe was incomplete, and that mattered.** It tested `rds:DescribeDBInstances`, a read action, and inferred that RDS was available. The SCP denies `rds:CreateDBInstance`, a write action, which was only discovered when the deployment failed. This is recorded as a finding in Section 6.1.
 
-## 3.1a F-13, the unit suite
+## 3.2 F-13. The unit suite
 
-50 tests covering collector parsing, rule engine matching and correlation, and the refusal conditions on both destructive actions. They use only the standard library with the AWS SDK stubbed, so they run on any machine with a Python interpreter.
+62 tests covering collector parsing, rule engine matching and correlation, the refusal conditions on both destructive actions, and the forwarder agent's tail loop. They use only the standard library with the AWS SDK stubbed, so they run on any machine with a Python interpreter.
 
 The suite found a defect that would not have surfaced in normal operation. The rule engine read the event identifier directly when logging a non-match, so an event without that field would raise a `KeyError`. Because the handler processes an SQS batch, that single bad message would have failed the whole batch rather than only itself. The collector always sets the field, so no live event would have triggered it, but a replayed message would.
 
@@ -83,7 +83,7 @@ Fixed by reading the field with a fallback. The test that exposed it is a batch-
 
 The AWS calls are deliberately not unit tested. Mocking a cloud provider proves the mock behaves, not the system. That confidence comes from the end-to-end tests in Section 4, which assert on real state changes in the real account.
 
-## 3.2 F-07. Private ingest reachability
+## 3.3 F-07. Private ingest reachability
 
 Executed on the k3s node in the platform spoke:
 
@@ -98,7 +98,7 @@ Result: **200**.
 
 This confirms the requirement that monitoring can feed the SOAR pipeline. It also validates the second interface endpoint added in the platform spoke. Before that endpoint existed, the same request resolved to a public address and was rejected by the API's resource policy, which was the expected and correct behaviour for a private API.
 
-## 3.3 F-10. Monitoring data in object storage
+## 3.4 F-10. Monitoring data in object storage
 
 ```
 aws s3 ls s3://innovatech-observability-9e024ca1/ --recursive

@@ -161,6 +161,12 @@ output "k3s_private_ip" {
   value = aws_instance.k3s_server.private_ip
 }
 
+# Needed for Session Manager access, which is the preferred administrative
+# route because it involves no key material on the bastion.
+output "k3s_instance_id" {
+  value = aws_instance.k3s_server.id
+}
+
 output "demo_workstation_id" {
   value = aws_instance.demo_workstation.id
 }

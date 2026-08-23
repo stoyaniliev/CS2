@@ -25,16 +25,28 @@ The design document explains why the system is shaped the way it is. This one ex
 | Region | eu-central-1 |
 | Repository | github.com/stoyaniliev/CS2 |
 | Terraform state | S3 `innovatech-cs2-tfstate-33aed9c1`, lock table `innovatech-cs2-tflock` |
-| Bastion | 63.183.208.221 |
-| k3s node | 10.1.10.149 |
-| Demo target | i-049e95348a865e18d |
+| Bastion | 3.64.216.7 |
+| k3s node | 10.1.10.105 |
+| Simulated on-premises server | 10.1.10.149 |
+| Demo target | i-049e95348a865e18d, private address 10.1.11.193 |
 | Platform NACL | acl-068c30bcdb9226b04 |
 | Quarantine group | sg-0b4ece4aff6a3eebe |
 | Observability bucket | innovatech-observability-9e024ca1 |
 | SOAR ingest | https://lb535ebwpi.execute-api.eu-central-1.amazonaws.com/prod/events |
 | Event bus | innovatech-soar |
 
-The bastion public address and the k3s private address change if either instance is replaced. Read them from `terraform output` rather than from this table if something looks wrong.
+**Every address in this table changes when its instance is replaced, and private addresses are recycled inside the subnet.** After a rebuild, `10.1.10.149` was reassigned from the k3s node to the corporate server, so a command copied from an earlier version of this document would have connected to the wrong host.
+
+Read the current values before using them:
+
+```
+cd terraform
+terraform output bastion_public_ip
+terraform output k3s_private_ip
+terraform output corp_server_ip
+```
+
+The commands below use the values in the table for readability. Substitute the current ones.
 
 ## 2.2 Lambda functions
 
@@ -67,8 +79,9 @@ The k3s node sits in a private subnet. Two routes in.
 **Through the bastion.** The generated key is at the repository root as `innovatech-key.pem`, excluded from git.
 
 ```
-ssh -i innovatech-key.pem ubuntu@63.183.208.221
-ssh -i ~/key.pem ubuntu@10.1.10.149
+ssh -i innovatech-key.pem ubuntu@$(terraform -chdir=terraform output -raw bastion_public_ip)
+# then, on the bastion:
+ssh -i ~/key.pem ubuntu@10.1.10.105
 ```
 
 The second hop needs the key present on the bastion. This works but weakens the security position, because it puts a credential for everything behind the bastion onto the bastion itself. Treat it as a stopgap.
@@ -76,7 +89,7 @@ The second hop needs the key present on the bastion. This works but weakens the 
 **Through Session Manager.** Preferred, and no key material involved. Requires the session manager plugin installed locally.
 
 ```
-aws ssm start-session --target i-02355e292d9f754a1 --region eu-central-1
+aws ssm start-session --target $(terraform -chdir=terraform output -raw k3s_instance_id) --region eu-central-1
 ```
 
 On the node, kubectl needs the kubeconfig path:
@@ -91,7 +104,7 @@ kubectl get nodes
 Tunnel from a workstation:
 
 ```
-ssh -i innovatech-key.pem -L 3000:10.1.10.149:30030 ubuntu@63.183.208.221 -N
+ssh -i innovatech-key.pem -L 3000:10.1.10.105:30030 ubuntu@3.64.216.7 -N
 ```
 
 Then open `http://localhost:3000`. Credentials are admin and the password set at deployment. Change it before any real use.
@@ -245,7 +258,7 @@ The last step posts a test event to the SOAR ingest endpoint from inside the clu
 Deployed by pipeline on any change under `soar/console/`. Reach it by tunnelling to the k3s node:
 
 ```
-ssh -i innovatech-key.pem -L 8080:10.1.10.149:30080 ubuntu@63.183.208.221 -N
+ssh -i innovatech-key.pem -L 8080:10.1.10.105:30080 ubuntu@3.64.216.7 -N
 ```
 
 It shows active blocks, quarantined hosts and recent events, refreshing every thirty seconds. Running a SOAR test in another window and watching the counters move is a reasonable smoke test of the whole pipeline.
@@ -440,3 +453,131 @@ Steady state is roughly €256 per month. Two levers matter.
 **The k3s node** is a t3.large at about €60. It can be stopped when the platform is idle, though the observability stack then needs a few minutes to settle after it starts.
 
 Do not destroy and recreate the Transit Gateway to save money. Attachment creation and deletion each take several minutes, and the saving is small relative to the disruption.
+
+```{=openxml}
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+```
+
+# Appendix A. Self-hosted runner setup
+
+REQ-NCA-P2-11 requires the pipelines to be executable from a local runner. This appendix covers registering one and what it needs installed.
+
+A GitHub-hosted runner cannot do this work. The Terraform state is in a private bucket, the k3s API has no public address, and the SOAR ingest endpoint is reachable only from inside the VPC. The runner has to sit somewhere with a path to those things, which in this project is the same workstation used for development.
+
+## Appendix A.1 What the machine needs
+
+| Tool | Why | Check |
+|---|---|---|
+| Terraform >= 1.6 | infrastructure jobs | `terraform version` |
+| AWS CLI v2 | credentials and verification steps | `aws --version` |
+| Python 3.10+ | tests and playbook validation | `python3 --version` |
+| Docker | console image build | `docker version` |
+| Git | checkout | `git --version` |
+| OpenSSH client | deploying to k3s through the bastion | `ssh -V` |
+
+On Windows, Git Bash provides `bash`, `ssh`, `scp` and `curl`, which the workflows rely on. The workflows set `shell: bash` explicitly for that reason.
+
+## Appendix A.2 Registering the runner
+
+In the repository: **Settings**, **Actions**, **Runners**, **New self-hosted runner**. Pick the platform and follow the commands shown, which are specific to your repository and carry a one-time token.
+
+On Windows the sequence is roughly:
+
+```powershell
+mkdir C:\actions-runner ; cd C:\actions-runner
+
+./config.cmd --url https://github.com/stoyaniliev/CS2 --token <TOKEN>
+```
+
+Accept the defaults for the runner group. Give it a name you will recognise and add the label `self-hosted`, which the workflows target.
+
+Run it in the foreground while testing so you can see what happens:
+
+```powershell
+./run.cmd
+```
+
+Install it as a service once it works:
+
+```powershell
+./svc.sh install
+./svc.sh start
+```
+
+## Appendix A.3 Credentials
+
+The runner inherits the environment of the account it runs as, so the AWS session belongs to that account rather than to the workflow.
+
+Before triggering an infrastructure job:
+
+```powershell
+aws sso login
+```
+
+The plan job checks for a valid session first and fails with a clear message rather than a confusing Terraform error if there is none. That check exists because an expired session partway through an apply is the most disruptive failure mode in this project.
+
+Running the runner as a service complicates this, because the service account has its own profile. For a project of this size, running it interactively in a terminal you have already authenticated is simpler and more predictable.
+
+## Appendix A.4 Repository secrets
+
+One secret is needed, for the console deployment:
+
+**Settings**, **Secrets and variables**, **Actions**, **New repository secret**
+
+| Name | Used by | Value |
+|---|---|---|
+| `BASTION_SSH_KEY` | console, observability | The full contents of `innovatech-key.pem`, including the BEGIN and END lines |
+| `TAILSCALE_AUTH_KEY` | infrastructure | A reusable, pre-approved auth key from the Tailscale admin console |
+| `ALERT_EMAIL` | infrastructure | The address subscribed to the SOAR notification topic |
+| `GRAFANA_PASSWORD` | observability | The Grafana admin password |
+
+`terraform.tfvars` is excluded from version control because it holds a live auth key, so the runner has no copy of it. Terraform reads `TF_VAR_*` from the environment, which is how the last three reach it. The plan job checks for them and fails with a named message rather than a confusing Terraform error.
+
+The deploy job writes it to disk, uses it, and removes it in an `always()` step so it does not persist on the runner between jobs.
+
+This is a compromise worth naming. Putting a private key into repository secrets means anyone with write access to the repository can reach the bastion. The better arrangement is an OIDC trust between GitHub and AWS so the runner assumes a role with no long-lived credential at all, combined with Session Manager instead of SSH. That is recorded as a recommendation in the design document rather than implemented, because it needs an identity provider configuration this account does not have.
+
+## Appendix A.5 Environment protection
+
+The apply job and the console deploy job both target an environment called `production`.
+
+**Settings**, **Environments**, **New environment**, name it `production`, and add yourself as a required reviewer.
+
+With that in place, a deployment pauses and waits for approval instead of proceeding automatically. This is the mechanism behind the decision not to auto-apply: the pipeline proves a change is valid, and a person decides when it lands.
+
+## Appendix A.6 The four pipelines
+
+| Workflow | Trigger | Does |
+|---|---|---|
+| `01-soar-ci.yml` | any change under `soar/` | Compiles the handlers, runs 62 unit tests, validates playbook integrity, packages the function archives |
+| `02-infrastructure.yml` | changes under `terraform/`, `soar/`, or the workflow itself | Formats, validates, plans, then applies. An additive plan applies without approval; a plan that would destroy or replace anything routes to review first. Afterwards it verifies every function is active and both dead-letter queues are empty |
+| `03-soar-console.yml` | changes under `soar/console/` | Builds the container, smoke tests it on the runner, pushes to ECR, deploys to k3s, and confirms the running image is the one just built |
+| `04-observability.yml` | changes under `observability/` | Validates the Helm values and dashboards, renders them from Terraform state, deploys the stack, then confirms every expected component is present and that Alertmanager reaches the SOAR ingest endpoint |
+
+## Appendix A.7 Running them
+
+**Automatically.** Push to `main`. CI and the plan run on their own.
+
+**Applying infrastructure.** Actions tab, Infrastructure, Run workflow, choose `apply`. It plans first, then waits for the environment approval.
+
+**Deploying the console.** Runs on any change under `soar/console/`, or manually from the Actions tab.
+
+## Appendix A.8 When things fail
+
+**Jobs queue and never start.** The runner is offline. Check Settings, Actions, Runners for a green dot, and that `run.cmd` is still going.
+
+**`terraform: command not found`.** The runner service started before the PATH included Terraform. Restart the runner.
+
+**The plan job reports no AWS session.** Run `aws sso login` in the terminal the runner is running in, then re-trigger.
+
+**Docker build fails on Windows.** Docker Desktop needs to be running and set to Linux containers.
+
+**The deploy job cannot reach the k3s node.** The bastion address changes if that instance is replaced. Read the current value from `terraform output bastion_public_ip` and update the `BASTION` variable at the top of the workflow.
+
+## Appendix A.9 Verifying the console after deployment
+
+```
+ssh -i innovatech-key.pem -L 8080:10.1.10.105:30080 ubuntu@3.64.216.7 -N
+```
+
+Then open `http://localhost:8080`. The page lists active blocks, quarantined hosts and recent events, and refreshes every thirty seconds. Running a SOAR test in another terminal and watching the numbers change is a good demonstration in its own right.

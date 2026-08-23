@@ -458,13 +458,14 @@ The repository is organised so that each concern is separately reviewable:
 |---|---|
 | `terraform/` | Infrastructure definitions and the reusable spoke module |
 | `soar/` | Collector, rule engine, response actions, playbooks |
+| `soar/forwarder/` | The agent that runs on the on-premises server |
 | `soar/console/` | Containerised read-only console and its Kubernetes manifests |
-| `soar/tests/` | 50 unit tests, no external dependencies |
-| `observability/` | Monitoring stack deployment |
+| `soar/tests/` | 62 unit tests, no external dependencies |
+| `observability/` | Helm values, alert rules and the Grafana dashboard |
 | `scripts/` | End-to-end test and operational tooling |
-| `docs/` | This documentation set |
+| `docs/` | This documentation set and its evidence |
 
-### The three pipelines
+### The four pipelines
 
 | Workflow | Trigger | Responsibility |
 |---|---|---|
@@ -594,6 +595,8 @@ Approximate steady-state monthly cost at the deployed scale:
 | **Total** | **≈ 263** |
 
 The Resolver inbound endpoint is the largest single line and is behind a feature flag. Disabling it when hybrid DNS is not being demonstrated reduces the total by roughly a third; VPC-internal resolution is unaffected.
+
+Four EC2 instances are running: the hybrid gateway, the k3s server, the demonstration workstation, and the simulated corporate server. Only the k3s node is sized above `t3.micro`, because it carries the whole observability stack.
 
 ```{=openxml}
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
