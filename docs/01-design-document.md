@@ -330,6 +330,8 @@ Nothing about the events it produces is synthetic. When the demonstration runs f
 
 It is deliberately not tagged `SOARable`. Quarantining the machine that reports intrusions would silence the alarm rather than contain the intruder, and the tag is the mechanism that prevents it.
 
+It is also scraped by Prometheus like any other monitored machine, so it appears in the estate view and `TargetDown` fires for it in the same way as for a cloud host. A server that produces security events while being invisible to monitoring is a gap an operator only discovers during an incident.
+
 ## 5.3 Event normalisation
 
 Each source speaks a different format. The collector normalises all of them into one internal schema so the rule engine never needs to know where an event came from:

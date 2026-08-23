@@ -29,6 +29,44 @@ class SyslogParsing(unittest.TestCase):
         self.assertEqual(e["event_type"], "privilege_escalation_attempt")
         self.assertEqual(e["severity"], "high")
 
+    def test_invalid_user_is_classified_with_its_source(self):
+        """The forwarder sends these, so the collector must handle them.
+        Falling through to syslog_generic would lose the source address and
+        no playbook could act."""
+        e = collector.parse_syslog({
+            "host": "corp-server",
+            "message": ("Aug 23 11:04:02 corp-server sshd[901]: Invalid user "
+                        "admin from 10.0.0.94 port 40122"),
+        })[0]
+        self.assertEqual(e["event_type"], "ssh_auth_failure")
+        self.assertEqual(e["source_ip"], "10.0.0.94")
+        self.assertEqual(e["severity"], "high")
+
+    def test_break_in_warning_is_critical(self):
+        e = collector.parse_syslog({
+            "host": "corp-server",
+            "message": ("reverse mapping checking getaddrinfo for host [203.0.113.9] "
+                        "failed - POSSIBLE BREAK-IN ATTEMPT!"),
+        })[0]
+        self.assertEqual(e["event_type"], "ssh_auth_failure")
+        self.assertEqual(e["source_ip"], "203.0.113.9")
+        self.assertEqual(e["severity"], "critical")
+
+    def test_every_pattern_the_forwarder_sends_is_classified(self):
+        """Guards the contract between the two components. If the forwarder
+        learns a new pattern and the collector does not, events arrive
+        unclassified and silently do nothing."""
+        samples = [
+            "sshd[1]: Failed password for root from 203.0.113.66 port 22 ssh2",
+            "sshd[1]: Invalid user admin from 203.0.113.66 port 22",
+            "sudo: pam_unix(sudo:auth): authentication failure; user=stoyan",
+        ]
+        for msg in samples:
+            with self.subTest(msg=msg[:40]):
+                e = collector.parse_syslog({"host": "corp-server", "message": msg})[0]
+                self.assertNotEqual(e["event_type"], "syslog_generic",
+                                    f"forwarder sends this but collector does not classify it: {msg}")
+
     def test_unrecognised_line_is_kept_not_dropped(self):
         """An event with no rule yet is a coverage gap, not noise to discard."""
         events = collector.parse_syslog({"host": "h", "message": "Started daily cleanup."})

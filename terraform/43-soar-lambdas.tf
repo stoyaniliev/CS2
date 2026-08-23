@@ -190,12 +190,12 @@ resource "aws_lambda_function" "block_expiry" {
 
 resource "aws_cloudwatch_log_group" "soar" {
   for_each = {
-    collector   = aws_lambda_function.collector.function_name
+    collector  = aws_lambda_function.collector.function_name
     rule_engine = aws_lambda_function.rule_engine.function_name
-    block_ip    = aws_lambda_function.action_block_ip.function_name
-    quarantine  = aws_lambda_function.action_quarantine.function_name
-    notify      = aws_lambda_function.action_notify.function_name
-    expiry      = aws_lambda_function.block_expiry.function_name
+    block_ip   = aws_lambda_function.action_block_ip.function_name
+    quarantine = aws_lambda_function.action_quarantine.function_name
+    notify     = aws_lambda_function.action_notify.function_name
+    expiry     = aws_lambda_function.block_expiry.function_name
   }
 
   name              = "/aws/lambda/${each.value}"

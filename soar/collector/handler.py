@@ -50,6 +50,18 @@ SSHD_FAILED = re.compile(
     r"Failed (?:password|publickey) for (?:invalid user )?(?P<user>\S+) "
     r"from (?P<ip>\d{1,3}(?:\.\d{1,3}){3}) port (?P<port>\d+)"
 )
+# sshd logs a rejected known user and a rejected unknown user differently.
+# The forwarder sends both, so both are classified here; a mismatch would leave
+# half the on-premises events arriving as unclassified with no source address,
+# which no playbook can act on.
+INVALID_USER = re.compile(
+    r"Invalid user (?P<user>\S+) from (?P<ip>\d{1,3}(?:\.\d{1,3}){3})"
+)
+
+BREAK_IN = re.compile(
+    r"(?P<host>\S+) \[(?P<ip>\d{1,3}(?:\.\d{1,3}){3})\].*POSSIBLE BREAK-IN ATTEMPT"
+)
+
 SUDO_FAILURE = re.compile(r"sudo:.*authentication failure.*user=(?P<user>\S+)")
 
 
@@ -128,6 +140,30 @@ def parse_syslog(body: dict) -> list:
             target_host=host,
             description=f"Failed SSH authentication for user {match.group('user')}",
             raw={"message": message, "user": match.group("user")},
+        )]
+
+    match = INVALID_USER.search(message)
+    if match:
+        return [_new_event(
+            source="syslog",
+            event_type="ssh_auth_failure",
+            severity="high",
+            source_ip=match.group("ip"),
+            target_host=host,
+            description=f"SSH attempt for non-existent user {match.group('user')}",
+            raw={"message": message, "user": match.group("user")},
+        )]
+
+    match = BREAK_IN.search(message)
+    if match:
+        return [_new_event(
+            source="syslog",
+            event_type="ssh_auth_failure",
+            severity="critical",
+            source_ip=match.group("ip"),
+            target_host=host,
+            description="Reverse DNS mismatch, possible break-in attempt",
+            raw={"message": message},
         )]
 
     match = SUDO_FAILURE.search(message)
@@ -249,5 +285,3 @@ def handler(lambda_event, context):
             "event_ids": [e["event_id"] for e in events[:accepted]],
         }),
     }
-
-# pipeline verification run

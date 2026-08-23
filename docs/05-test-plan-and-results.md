@@ -55,6 +55,7 @@ The end-to-end tests are scripted (`scripts/test-soar-bruteforce.ps1`, `scripts/
 | F-16 | Monitoring to SOAR path verified per deployment | Post-deploy check in the pipeline | HTTP 200 from inside the cluster | **Pass** |
 | F-17 | On-premises forwarder agent running | `systemctl is-active soar-forwarder` on corp-server | active | **Pass** |
 | F-18 | SOAR dashboard imported from versioned JSON | ConfigMap labelled `grafana_dashboard` present | Dashboard visible in Grafana | **Pass** |
+| F-19 | On-premises host is monitored, not just a source | Prometheus targets | corp-server scraped, appears in the estate view | **Pass** |
 
 ## 3.1 F-01. Capability probe
 
@@ -155,29 +156,35 @@ Elapsed from first event to network change: under 25 seconds.
 
 ## 4.3 E-03. On-premises syslog event source
 
-**Objective.** Prove the requirement that alerts originate from on-premises servers, with no part of the event fabricated.
+**Objective.** Prove that alerts originate from an on-premises server with no part of the event fabricated, and that the internal-address guard holds on real data.
 
-**Method.** Six failed SSH logins executed against `corp-server` from the bastion. Nothing submits an event: sshd writes the failures to `/var/log/auth.log` itself, and the forwarder agent reads what sshd wrote.
+**Method.** Six SSH login attempts against `corp-server` using accounts that do not exist. sshd rejects each and writes `Invalid user <name> from <address>` to `/var/log/auth.log` itself. The forwarder agent reads what sshd wrote. No password is needed, so nothing is simulated at any point in the chain.
 
 **Chain under test.**
 
 ```
-failed login -> sshd -> auth.log -> forwarder agent -> private API Gateway
--> collector -> DynamoDB + SQS -> rule engine -> EventBridge -> block_ip -> NACL
+ssh attempt -> sshd -> auth.log -> forwarder agent -> private API Gateway
+-> collector -> DynamoDB + SQS -> rule engine
 ```
 
-**Result.**
+**Result, part one: ingestion.**
 
 | Stage | Evidence |
 |---|---|
-| Origin | Real `Failed password` lines in auth.log on corp-server |
+| Origin | Real `Invalid user` lines in auth.log, written by sshd |
 | Forward | Agent journal shows each line posted |
 | Ingest | Events stored with source `syslog`, host `corp-server.innovatech.internal` |
-| Classify | Parsed as `ssh_auth_failure`, severity high, source address extracted |
-| Correlate | Threshold met, PB-001 matched |
-| Respond | DENY entry written to the platform network ACL |
+| Classify | `ssh_auth_failure`, severity high, source address extracted |
 
-**Significance.** The two tests above submit a payload to the collector, which proves the pipeline but not the source. This one closes that gap. The only simulated aspect is that the corporate server is an EC2 instance rather than hardware in a server room, which the assignment permits.
+**Result, part two: the guard.** PB-001 did not fire, and no block was created. The attempts originate from the bastion, which holds an internal address, so the playbook's `source_ip_is_external` condition evaluated false and the rule engine declined to act.
+
+That is the correct outcome and it is the more valuable half of this test. E-05 verifies the same guard with a synthetic event; this verifies it against traffic the system genuinely observed. An automated blocker that can be induced to block internal addresses can lock its own operators out of the environment, so the refusal path deserves testing on real input rather than only on input constructed to trigger it.
+
+Blocking of external addresses is covered by E-01.
+
+**A defect this test exposed.** The forwarder was written to send four patterns, including `Invalid user`, but the collector only classified `Failed password` and `Failed publickey`. Invalid-user events therefore arrived, fell through to `syslog_generic`, lost their source address, and matched no playbook. The two components disagreed about what an SSH authentication failure looks like, and nothing failed loudly: events were ingested and stored, they simply never did anything.
+
+Fixed by adding the missing patterns to the collector, and guarded by a unit test that asserts every pattern the forwarder sends is classified by the collector, so the contract between the two cannot drift again.
 
 Run with `scripts/test-soar-onprem-syslog.ps1`.
 
@@ -332,7 +339,7 @@ The `ActionsSkipped` metric with a reason dimension exists so that refusals are 
 | P2-02 Network segmentation | F-04, F-05 |
 | P2-03 Private resource access | F-05, F-06, F-07 |
 | P2-04 Internal DNS | F-04 (zone associations), design document |
-| P2-05 Observability stack | F-09, F-10, F-15 |
+| P2-05 Observability stack | F-09, F-10, F-15, F-19 |
 | P2-06 Event-driven SOAR | E-01, E-02, E-03, F-17, R-01 |
 | P2-07 Serverless components | F-09, E-01, E-02 |
 | P2-08 SOAR self-monitoring | F-11, F-18 |

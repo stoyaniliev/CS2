@@ -129,9 +129,9 @@ data "aws_iam_policy_document" "action_quarantine" {
     resources = ["*"]
   }
   statement {
-    sid       = "IsolateTaggedInstancesOnly"
-    effect    = "Allow"
-    actions   = ["ec2:ModifyInstanceAttribute"]
+    sid    = "IsolateTaggedInstancesOnly"
+    effect = "Allow"
+    actions = ["ec2:ModifyInstanceAttribute"]
     resources = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*"]
     # Second safety gate, enforced by IAM rather than by code: even if the
     # handler's tag check were bypassed, the API call itself fails on any

@@ -92,7 +92,7 @@ jobs:
 
       - name: Confirm every placeholder is one the pipeline substitutes
         run: |
-          KNOWN="__REGION__ __S3_BUCKET__ __SOAR_INGEST_URL__ __GRAFANA_PASSWORD__ __DEMO_TARGET__ __DEMO_INSTANCE_ID__"
+          KNOWN="__REGION__ __S3_BUCKET__ __SOAR_INGEST_URL__ __GRAFANA_PASSWORD__ __DEMO_TARGET__ __DEMO_INSTANCE_ID__ __ONPREM_TARGET__"
           found=$(grep -ohE '__[A-Z_]+__' observability/values/*.yaml | sort -u)
           fail=0
           for token in $found; do
@@ -121,6 +121,7 @@ jobs:
             echo "S3_BUCKET=$(terraform output -raw observability_bucket)"
             echo "SOAR_INGEST_URL=$(terraform output -raw soar_ingest_url)"
             echo "DEMO_INSTANCE_ID=$(terraform output -raw demo_workstation_id)"
+            echo "ONPREM_TARGET=$(terraform output -raw corp_server_ip)"
           } >> "$GITHUB_ENV"
           echo "resolved:"
           terraform output -raw bastion_public_ip; echo
@@ -183,6 +184,7 @@ jobs:
                 -e "s|__SOAR_INGEST_URL__|${SOAR_INGEST_URL}|g" \
                 -e "s|__DEMO_TARGET__|${DEMO_TARGET}|g" \
                 -e "s|__DEMO_INSTANCE_ID__|${DEMO_INSTANCE_ID}|g" \
+                -e "s|__ONPREM_TARGET__|${ONPREM_TARGET}|g" \
                 -e "s|__GRAFANA_PASSWORD__|${GRAFANA_PASSWORD}|g" \
                 "$f" > "$out"
             # Nothing should remain unsubstituted, and a leftover token would

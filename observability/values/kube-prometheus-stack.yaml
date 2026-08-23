@@ -24,8 +24,16 @@ prometheus:
     additionalScrapeConfigs:
       - job_name: onprem-nodes
         static_configs:
-          - targets: []      # populated once on-premises hosts join the tailnet
-            labels: { environment: onpremises }
+          - targets: ['__ONPREM_TARGET__:9100']
+            labels:
+              environment: onpremises
+              role: corp-server
+        # Physical on-premises hosts are added here once joined to the tailnet.
+        # The simulated corporate server is scraped like any other monitored
+        # machine, so it appears in the estate view and TargetDown fires for it
+        # in the same way. Without this the host would produce security events
+        # while being invisible to monitoring, which is a gap an operator would
+        # only notice during an incident.
       - job_name: demo-workstation
         static_configs:
           - targets: ['__DEMO_TARGET__:9100']
