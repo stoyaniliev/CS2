@@ -38,10 +38,17 @@ Pop-Location
 Write-Host "  bastion      $Bastion"
 Write-Host "  corp-server  $CorpServer"
 
-$Proxy = "ssh -i $KeyPath -o StrictHostKeyChecking=accept-new -W %h:%p ubuntu@$Bastion"
+# Host keys are not pinned for the internal hops. Instances are replaced
+# routinely and private addresses are recycled inside the subnet, so a pinned
+# key produces a false man-in-the-middle warning every time a host is rebuilt.
+# Pinning by address is not meaningful for ephemeral infrastructure; the
+# correct production answer is Session Manager or Tailscale SSH, where the
+# identity is the machine rather than the address it happens to hold.
+$SshOpts = @("-o","StrictHostKeyChecking=no","-o","UserKnownHostsFile=NUL","-o","LogLevel=ERROR")
+$Proxy   = "ssh -i $KeyPath -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o LogLevel=ERROR -W %h:%p ubuntu@$Bastion"
 
 Write-Host "`n=== Forwarder agent status ===" -ForegroundColor Cyan
-ssh -i $KeyPath -o StrictHostKeyChecking=accept-new -o ProxyCommand=$Proxy `
+ssh -i $KeyPath @SshOpts -o ProxyCommand=$Proxy `
     ubuntu@$CorpServer "systemctl is-active soar-forwarder"
 
 $before = aws dynamodb scan --table-name innovatech-soar-events --region $Region `
@@ -73,7 +80,7 @@ for u in admin oracle postgres jenkins backup deploy; do
 done
 "@
 
-ssh -i $KeyPath -o StrictHostKeyChecking=accept-new ubuntu@$Bastion $attack
+ssh -i $KeyPath @SshOpts ubuntu@$Bastion $attack
 
 Write-Host "`nWaiting 40s for the forwarder poll, ingest and rule evaluation..." -ForegroundColor Yellow
 Start-Sleep -Seconds 40
@@ -81,11 +88,11 @@ Start-Sleep -Seconds 40
 # --- Verify ------------------------------------------------------------------
 
 Write-Host "`n=== What sshd actually wrote ===" -ForegroundColor Cyan
-ssh -i $KeyPath -o StrictHostKeyChecking=accept-new -o ProxyCommand=$Proxy `
+ssh -i $KeyPath @SshOpts -o ProxyCommand=$Proxy `
     ubuntu@$CorpServer "sudo grep -E 'Invalid user|Failed password' /var/log/auth.log | tail -6"
 
 Write-Host "`n=== What the forwarder sent ===" -ForegroundColor Cyan
-ssh -i $KeyPath -o StrictHostKeyChecking=accept-new -o ProxyCommand=$Proxy `
+ssh -i $KeyPath @SshOpts -o ProxyCommand=$Proxy `
     ubuntu@$CorpServer "sudo journalctl -u soar-forwarder --since '3 minutes ago' --no-pager | grep forwarded | tail -8"
 
 Write-Host "`n=== Events in the SOAR store from this host ===" -ForegroundColor Cyan

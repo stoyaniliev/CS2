@@ -1,5 +1,4 @@
 {
-  "__inputs": [],
   "annotations": {
     "list": [
       {
@@ -48,7 +47,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(aws_innovatech_soar_events_ingested_sum[1h]))",
+          "expr": "sum(sum_over_time(innovatech_soar_events_ingested_sum[1h]))",
           "legendFormat": "Events ingested (1h)",
           "refId": "A",
           "datasource": {
@@ -72,11 +71,22 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "decimals": 0,
           "color": {
             "mode": "fixed",
             "fixedColor": "green"
           },
-          "mappings": []
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       }
@@ -97,7 +107,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(aws_innovatech_soar_playbook_matched_sum[1h]))",
+          "expr": "sum(sum_over_time(innovatech_soar_playbook_matched_sum[1h]))",
           "legendFormat": "Playbooks matched (1h)",
           "refId": "A",
           "datasource": {
@@ -121,11 +131,22 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "decimals": 0,
           "color": {
             "mode": "fixed",
             "fixedColor": "blue"
           },
-          "mappings": []
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       }
@@ -146,7 +167,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(aws_innovatech_soar_actions_executed_sum[1h]))",
+          "expr": "sum(sum_over_time(innovatech_soar_actions_executed_sum[1h]))",
           "legendFormat": "Actions executed (1h)",
           "refId": "A",
           "datasource": {
@@ -170,11 +191,22 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "decimals": 0,
           "color": {
             "mode": "fixed",
             "fixedColor": "green"
           },
-          "mappings": []
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       }
@@ -195,7 +227,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(aws_innovatech_soar_actions_failed_sum[1h]))",
+          "expr": "sum(sum_over_time(innovatech_soar_actions_failed_sum[1h]))",
           "legendFormat": "Actions failed (1h)",
           "refId": "A",
           "datasource": {
@@ -219,11 +251,22 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "decimals": 0,
           "color": {
             "mode": "fixed",
             "fixedColor": "red"
           },
-          "mappings": []
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       }
@@ -244,7 +287,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(aws_innovatech_soar_actions_skipped_sum[1h]))",
+          "expr": "sum(sum_over_time(innovatech_soar_actions_skipped_sum[1h]))",
           "legendFormat": "Actions refused (1h)",
           "refId": "A",
           "datasource": {
@@ -268,11 +311,22 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "decimals": 0,
           "color": {
             "mode": "fixed",
             "fixedColor": "orange"
           },
-          "mappings": []
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       }
@@ -293,7 +347,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(aws_innovatech_soar_events_unmatched_sum[1h]))",
+          "expr": "sum(sum_over_time(innovatech_soar_events_unmatched_sum[1h]))",
           "legendFormat": "Unmatched events (1h)",
           "refId": "A",
           "datasource": {
@@ -317,11 +371,22 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "decimals": 0,
           "color": {
             "mode": "fixed",
             "fixedColor": "purple"
           },
-          "mappings": []
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       }
@@ -341,7 +406,7 @@
     {
       "type": "timeseries",
       "title": "Event flow through the pipeline",
-      "description": "Ingested should exceed matched, and dispatched should equal executed. Divergence between the last two means actions are failing.",
+      "description": "Per-minute counts. Dispatched and executed should track each other exactly; a gap between them means actions are failing.",
       "gridPos": {
         "x": 0,
         "y": 6,
@@ -354,7 +419,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(aws_innovatech_soar_events_ingested_sum[5m]))",
+          "expr": "sum(innovatech_soar_events_ingested_sum)",
           "legendFormat": "ingested",
           "refId": "A",
           "datasource": {
@@ -363,7 +428,7 @@
           }
         },
         {
-          "expr": "sum(rate(aws_innovatech_soar_playbook_matched_sum[5m]))",
+          "expr": "sum(innovatech_soar_playbook_matched_sum)",
           "legendFormat": "matched a playbook",
           "refId": "B",
           "datasource": {
@@ -372,7 +437,7 @@
           }
         },
         {
-          "expr": "sum(rate(aws_innovatech_soar_actions_dispatched_sum[5m]))",
+          "expr": "sum(innovatech_soar_actions_dispatched_sum)",
           "legendFormat": "actions dispatched",
           "refId": "C",
           "datasource": {
@@ -381,7 +446,7 @@
           }
         },
         {
-          "expr": "sum(rate(aws_innovatech_soar_actions_executed_sum[5m]))",
+          "expr": "sum(innovatech_soar_actions_executed_sum)",
           "legendFormat": "actions executed",
           "refId": "D",
           "datasource": {
@@ -403,11 +468,13 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
+          "unit": "short",
           "custom": {
             "lineWidth": 2,
-            "fillOpacity": 10,
-            "showPoints": "never"
+            "fillOpacity": 15,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -429,7 +496,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (action_type) (rate(aws_innovatech_soar_actions_executed_sum[5m]))",
+          "expr": "sum by (action_type) (innovatech_soar_actions_executed_sum)",
           "legendFormat": "{{action_type}}",
           "refId": "A",
           "datasource": {
@@ -451,11 +518,13 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
+          "unit": "short",
           "custom": {
             "lineWidth": 2,
-            "fillOpacity": 10,
-            "showPoints": "never"
+            "fillOpacity": 15,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -489,7 +558,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (action_type) (rate(aws_innovatech_soar_actions_failed_sum[5m]))",
+          "expr": "sum by (action_type) (innovatech_soar_actions_failed_sum)",
           "legendFormat": "failed {{action_type}}",
           "refId": "A",
           "datasource": {
@@ -498,7 +567,7 @@
           }
         },
         {
-          "expr": "sum by (reason) (rate(aws_innovatech_soar_actions_skipped_sum[5m]))",
+          "expr": "sum by (reason) (innovatech_soar_actions_skipped_sum)",
           "legendFormat": "refused: {{reason}}",
           "refId": "B",
           "datasource": {
@@ -520,11 +589,13 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
+          "unit": "short",
           "custom": {
             "lineWidth": 2,
-            "fillOpacity": 10,
-            "showPoints": "never"
+            "fillOpacity": 15,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -571,8 +642,10 @@
           "unit": "short",
           "custom": {
             "lineWidth": 2,
-            "fillOpacity": 10,
-            "showPoints": "never"
+            "fillOpacity": 15,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -581,7 +654,7 @@
     {
       "type": "timeseries",
       "title": "Lambda duration",
-      "description": "End to end detection latency is roughly the sum of collector, rule engine and action.",
+      "description": "Detection latency end to end is roughly collector plus rule engine plus action.",
       "gridPos": {
         "x": 0,
         "y": 23,
@@ -619,8 +692,10 @@
           "unit": "ms",
           "custom": {
             "lineWidth": 2,
-            "fillOpacity": 10,
-            "showPoints": "never"
+            "fillOpacity": 15,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -628,7 +703,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Lambda errors",
+      "title": "Lambda invocations and errors",
       "description": "Runtime errors, distinct from actions that ran and declined.",
       "gridPos": {
         "x": 12,
@@ -642,9 +717,18 @@
       },
       "targets": [
         {
-          "expr": "sum by (function_name) (rate(aws_lambda_errors_sum{function_name=~\"innovatech-soar.*\"}[5m]))",
-          "legendFormat": "{{function_name}}",
+          "expr": "sum by (function_name) (aws_lambda_invocations_sum{function_name=~\"innovatech-soar.*\"})",
+          "legendFormat": "invocations {{function_name}}",
           "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "expr": "sum by (function_name) (aws_lambda_errors_sum{function_name=~\"innovatech-soar.*\"})",
+          "legendFormat": "errors {{function_name}}",
+          "refId": "B",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
@@ -664,11 +748,13 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
+          "unit": "short",
           "custom": {
             "lineWidth": 2,
-            "fillOpacity": 10,
-            "showPoints": "never"
+            "fillOpacity": 15,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -689,7 +775,7 @@
     {
       "type": "timeseries",
       "title": "Scrape target availability",
-      "description": "A target dropping to zero fires TargetDown, which becomes a SOAR event through the Alertmanager webhook. This panel is where the monitoring and response halves visibly meet.",
+      "description": "A target dropping to zero fires TargetDown, which becomes a SOAR event through the Alertmanager webhook. This is where the monitoring and response halves visibly meet.",
       "gridPos": {
         "x": 0,
         "y": 32,
@@ -727,8 +813,10 @@
           "unit": "short",
           "custom": {
             "lineWidth": 2,
-            "fillOpacity": 10,
-            "showPoints": "never"
+            "fillOpacity": 15,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -767,6 +855,6 @@
   "timezone": "browser",
   "title": "SOAR Operations",
   "uid": "innovatech-soar-ops",
-  "version": 1,
+  "version": 2,
   "description": "Operational status of the Security Orchestration, Automation and Response system (REQ-NCA-P2-08)."
 }
