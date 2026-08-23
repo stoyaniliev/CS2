@@ -284,24 +284,40 @@ The secret had been created once, by hand, during the initial deployment. Fiftee
 
 ## 5.6 R-06. Planned instance replacement and automated recovery
 
-**The only failure test here that was designed rather than encountered.** The four above were real incidents. This one was executed deliberately to answer a question none of them could: can the platform be destroyed and restored without a person rebuilding it by hand?
+**The only failure test here that was designed rather than encountered**, and the one that answers the question the others could not: can the platform be destroyed and restored without a person rebuilding it by hand?
 
-**Method.** A Terraform change forced replacement of both the hybrid gateway and the k3s server. The plan was allowed through the pipeline's approval gate, both instances were destroyed and rebuilt, and recovery was performed entirely by re-running pipelines.
+**Method.** A Terraform change forced replacement of both the hybrid gateway and the k3s server. The plan was routed through the pipeline's approval gate, approved deliberately, and recovery was performed entirely by re-running pipelines.
 
-**Procedure.**
+**What was destroyed.** Both EC2 instances, and with them the entire container platform: k3s itself, Prometheus, Alertmanager, Loki, Alloy, Grafana, cloudwatch-exporter, the SOAR console, the ECR credential timer, and the Tailscale subnet router.
 
-1. Confirm the plan replaces `aws_instance.hybrid_gw` and `aws_instance.k3s_server`
-2. Approve the deployment in the production environment
-3. Wait for both instances to reach Running and their bootstraps to complete
-4. Run the Observability workflow to restore Prometheus, Alertmanager, Loki, Alloy, Grafana and the dashboard
-5. Run the SOAR Console workflow to restore the containerised console
-6. Run `scripts/test-soar-bruteforce.ps1` to confirm the response path still works
+**Result.**
 
-**What is actually being tested.** Not whether AWS can create an instance. Whether the configuration of those instances lives in code: k3s and its bootstrap, the ECR credential timer, the Tailscale subnet router, the observability stack, the dashboard, and the container workload.
+| Stage | Outcome |
+|---|---|
+| Apply | Both instances replaced, new private and public addresses issued |
+| SOAR response path | **Unaffected throughout.** No interruption at any point |
+| k3s bootstrap | Completed unattended, including the ECR credential timer |
+| Observability pipeline | Restored the full stack, addresses read from Terraform state, nothing edited |
+| Console pipeline | Restored the container, pulled from ECR without manual credential setup |
+| Verification | `test-soar-bruteforce.ps1` passed, address blocked as NACL rule 101 |
 
-**Expected behaviour.** The SOAR response pipeline is unaffected throughout, because it runs on Lambda and has no dependency on either instance. Monitoring and the console are unavailable between destruction and the pipeline runs completing. Nothing requires manual configuration at any point.
+**The result that matters most.** The brute-force test passed immediately after both instances were replaced, with no manual intervention, because the response pipeline runs on Lambda and has no dependency on either machine. Detection through to containment survived a rebuild of the entire platform layer. That is the design-for-failure claim in REQ-NCA-P2-01 demonstrated rather than argued.
 
-**Note on how this test came about.** The gate stopped an earlier accidental attempt at the same change. Being forced to review the plan prompted the question of what would break, which exposed that the observability stack was not reproducible at the time. The control found a design flaw before it found a destructive change.
+**Second most important.** The container pulled its image without anyone touching ECR credentials. When this same rebuild happened accidentally the day before, the pull failed and required manual intervention, because the credential timer had been installed by hand and did not survive. Moving it into the bootstrap fixed a class of problem rather than an instance of one, and this test is what proves it.
+
+**One manual step remained, and it was not the one documented.** The operations manual said to approve the Tailscale subnet routes after a rebuild, which is correct. What it did not say is that a replaced instance registers as a *new* tailnet machine with a suffixed hostname, `innovatech-aws-gw-1`, while the old entry lingers showing as disconnected. Approving routes on the old entry appears to work and silently does nothing. Corrected in the manual.
+
+**Recovery profile.**
+
+| Component | Unavailable during recovery |
+|---|---|
+| SOAR detection and response | Not at all |
+| Event ingest and storage | Not at all |
+| Monitoring and dashboards | From destruction until the observability pipeline completed |
+| SOAR console | From destruction until the console pipeline completed |
+| Hybrid connectivity | Until the new subnet routes were approved |
+
+**Note on how this test came about.** The approval gate stopped an earlier accidental attempt at the same change. Being forced to review the plan prompted the question of what would break, which exposed that the observability stack was not reproducible at the time. The control found a design flaw before it found a destructive change, and this test only became safe to run because of what it found.
 
 # 6. Findings
 

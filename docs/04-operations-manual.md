@@ -185,7 +185,7 @@ terraform taint aws_instance.k3s_server
 terraform apply
 ```
 
-Around four minutes to Ready. Then run the Observability workflow to restore the monitoring stack:
+Around four minutes to Ready. The bootstrap installs the ECR credential timer itself, so the node can pull container images without any manual setup. Then run the Observability workflow to restore the monitoring stack:
 
 Actions, Observability, Run workflow.
 
@@ -414,6 +414,8 @@ terraform apply
 Then deploy the observability stack onto the new k3s node.
 
 Two things do not come back automatically. The SNS email subscription needs confirming from the inbox, and Tailscale subnet routes need approving in the Tailscale admin console. Both are manual by design, because both are consent steps.
+
+**Approve the routes on the right machine.** A replaced instance registers as a new tailnet node with a suffixed hostname, `innovatech-aws-gw-1` and so on, while the old entry remains listed and shows as disconnected. Approving routes on the stale entry appears to succeed and has no effect, because that machine no longer exists. Check the connection status column, approve on the connected one, and delete the old entry so the list does not accumulate ghosts.
 
 Around thirty minutes end to end, most of it Transit Gateway attachments and the k3s bootstrap.
 
