@@ -133,6 +133,7 @@ data "aws_iam_policy_document" "action_quarantine" {
     effect    = "Allow"
     actions   = ["ec2:ModifyInstanceAttribute"]
     resources = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*"]
+
     # Second safety gate, enforced by IAM rather than by code: even if the
     # handler's tag check were bypassed, the API call itself fails on any
     # instance not explicitly marked as quarantinable.
@@ -141,6 +142,24 @@ data "aws_iam_policy_document" "action_quarantine" {
       variable = "aws:ResourceTag/SOARable"
       values   = ["true"]
     }
+  }
+
+  # ModifyInstanceAttribute with a Groups parameter authorises against the
+  # target security group as well as the instance, which is not obvious from
+  # the API name and was found by the call failing in testing.
+  #
+  # Granting only the quarantine group, rather than all of them, means this
+  # role can move a host INTO isolation and has no way to move it out. Release
+  # is therefore necessarily a human action, which is correct: deciding a
+  # compromised machine is safe to return to the network depends on an
+  # investigation, not on a timer.
+  statement {
+    sid     = "AttachQuarantineGroupOnly"
+    effect  = "Allow"
+    actions = ["ec2:ModifyInstanceAttribute"]
+    resources = [
+      "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:security-group/${aws_security_group.quarantine.id}",
+    ]
   }
   statement {
     effect    = "Allow"
