@@ -58,3 +58,5 @@ Helm driven by a pipeline against versioned values gives the same
 reproducibility with fewer moving parts, so that is what is implemented. The
 provider is the production recommendation once the cluster and its workloads
 are separated into different state.
+
+<!-- pipeline verification run -->

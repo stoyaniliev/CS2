@@ -249,3 +249,5 @@ def handler(lambda_event, context):
             "event_ids": [e["event_id"] for e in events[:accepted]],
         }),
     }
+
+# pipeline verification run
